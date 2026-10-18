@@ -889,3 +889,135 @@ i.icon-action-menu::before { color: #8e8e93; }
 i.icon-show-more::before, i.icon-pulldown::before { width: 1.05em; height: 1.05em; }
 i.icon-hierarchy::before { margin-right: 8px; width: 1em; height: 1em; }
 .generic-table--sort-header-outer i.icon-hierarchy { margin-right: 6px; }
+
+/* =====================================================================
+   23. Sidebar v2 — shadcn "sidebar" proportions (authoritative)
+   Expanded 256px / collapsed icon rail 56px on desktop; overlay on mobile.
+   ===================================================================== */
+@media (min-width: 900px) {
+  html { --main-menu-width: 256px !important; }
+  html.vk-sb-collapsed { --main-menu-width: 56px !important; }
+
+  /* old controls: native collapse button, drag-resizer, modules grid button */
+  #menu-toggle--collapse-button, #menu-toggle--expand-button,
+  opce-main-menu-resizer, .main-menu--resizer, .main-menu--navigation-toggler { display: none !important; }
+  .op-app-header button:has(svg.octicon-op-grid-menu) { display: none !important; }
+}
+
+@media (min-width: 900px) {
+  #main-menu { width: var(--main-menu-width) !important; min-width: var(--main-menu-width) !important; max-width: var(--main-menu-width) !important; }
+}
+#main-menu .main-menu--top-container { display: none !important; }   /* switcher lives in header now */
+#main-menu #menu-sidebar { padding: 8px; }
+#main-menu ul.menu_root, #main-menu .main-menu--children { padding: 0 !important; }
+#main-menu li { margin: 0 0 2px; }
+
+/* rows */
+#main-menu .op-menu--item-action,
+#main-menu .main-item-wrapper > a,
+#main-menu .main-menu--children a,
+.op-submenu--item-action {
+  height: 36px !important; min-height: 36px !important;
+  padding: 0 10px !important; padding-right: 32px !important;
+  gap: 10px !important;
+  font-size: 14px !important; font-weight: 500 !important; letter-spacing: -0.006em;
+  line-height: 20px !important;
+  border-radius: 8px !important;
+  color: #27272a !important;
+}
+.op-submenu--item-action { padding-right: 10px !important; }
+#main-menu .op-menu--item-action svg.octicon { width: 16px !important; height: 16px !important; color: #52525b !important; }
+#main-menu .op-menu--item-action:hover,
+#main-menu .main-item-wrapper:hover > a,
+.op-submenu--item-action:hover { background: #f1f1f3 !important; color: #09090b !important; }
+#main-menu .op-menu--item-action.selected,
+#main-menu a.selected, .op-submenu--item-action.selected {
+  background: #ececef !important; color: #09090b !important; font-weight: 600 !important;
+}
+#main-menu .op-menu--item-action.selected svg.octicon { color: #09090b !important; }
+
+/* chevron (hover only, overlaid → no shift) */
+#main-menu .main-menu-toggler { right: 6px; width: 24px !important; height: 24px !important; }
+#main-menu .main-menu-toggler svg.octicon { width: 14px !important; height: 14px !important; }
+
+/* submenu header: back button + title, vertically aligned */
+#main-menu .main-menu--children-menu-header {
+  align-items: center !important; gap: 6px !important;
+  min-height: 44px; padding: 4px 4px 8px !important; margin: 0;
+}
+#main-menu a.main-menu--arrow-left-to-project {
+  width: 28px !important; height: 28px !important; padding: 0 !important; flex: none;
+  display: inline-flex !important; align-items: center !important; justify-content: center !important;
+  border-radius: 8px !important; color: #52525b !important;
+}
+#main-menu a.main-menu--arrow-left-to-project:hover { background: #ececef !important; color: #09090b !important; }
+#main-menu a.main-menu--arrow-left-to-project svg.octicon { width: 16px !important; height: 16px !important; margin: 0 !important; }
+#main-menu a.main-menu--parent-node {
+  height: 28px !important; min-height: 0 !important; padding: 0 !important; margin: 0 !important;
+  display: flex !important; align-items: center !important;
+  font-size: 15px !important; font-weight: 600 !important; line-height: 28px !important;
+  background: transparent !important; color: #09090b !important;
+}
+
+/* group label */
+.op-submenu--title {
+  height: 32px; display: flex !important; align-items: center; justify-content: space-between;
+  padding: 0 10px !important; margin-top: 10px;
+  font-size: 12px !important; font-weight: 500 !important; color: #71717a !important;
+}
+.op-submenu--body { padding-top: 4px; }
+
+/* ----- collapsed icon rail (desktop) ----- */
+@media (min-width: 900px) {
+  html.vk-sb-collapsed #main-menu #menu-sidebar { padding: 8px; }
+  html.vk-sb-collapsed #main-menu ul.menu_root.closed > li { display: list-item !important; }
+  html.vk-sb-collapsed #main-menu .main-menu--children,
+  html.vk-sb-collapsed #main-menu .main-menu--children-menu-header,
+  html.vk-sb-collapsed #main-menu .main-menu-toggler { display: none !important; }
+  html.vk-sb-collapsed #main-menu .main-item-wrapper { display: block !important; }
+  html.vk-sb-collapsed #main-menu .op-menu--item-action,
+  html.vk-sb-collapsed #main-menu .main-item-wrapper > a {
+    width: 40px; height: 40px !important; padding: 0 !important; justify-content: center;
+  }
+  html.vk-sb-collapsed #main-menu .op-menu--item-title { display: none !important; }
+  html.vk-sb-collapsed #main-menu .op-menu--item-action svg.octicon { margin: 0 !important; width: 18px !important; height: 18px !important; }
+  html.vk-sb-collapsed #main-menu .op-menu--item-action .Label,
+  html.vk-sb-collapsed #main-menu .op-menu--item-action svg.octicon-op-enterprise-addons { display: none !important; }
+}
+
+/* ----- header toggle (created by theme.js) ----- */
+.vk-sb-toggle {
+  display: none;
+  width: 32px; height: 32px; margin: 0 4px 0 8px; padding: 0;
+  align-items: center; justify-content: center;
+  border: 0; border-radius: 8px; background: transparent; color: #52525b; cursor: pointer;
+  transition: background-color 0.14s ease, color 0.14s ease;
+}
+.vk-sb-toggle:hover { background: #ececef; color: #09090b; }
+.vk-sb-toggle svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+@media (min-width: 900px) { .vk-sb-toggle { display: inline-flex; } }
+
+/* OpenProject reserves 36px beside each row link for its own arrow button; ours is overlaid, so use full width */
+#main-menu .main-item-wrapper > a {
+  flex: 1 1 auto !important;
+  max-width: 100% !important;
+  width: 100% !important;
+  box-sizing: border-box;
+}
+@media (min-width: 900px) {
+  html.vk-sb-collapsed #main-menu .main-item-wrapper > a,
+  html.vk-sb-collapsed #main-menu .op-menu--item-action {
+    width: 40px !important; max-width: 40px !important; flex: none !important;
+  }
+}
+
+/* no shouting: sentence-case table headers and sidebar group labels everywhere */
+.op-submenu--title, .op-submenu--title *,
+.generic-table--action-menu-button, .generic-table--action-menu-button *,
+.generic-table thead th, .generic-table thead th * {
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+}
+.generic-table--action-menu-button {
+  font-size: 12px !important; font-weight: 500 !important; color: var(--vk-fg-muted) !important;
+}

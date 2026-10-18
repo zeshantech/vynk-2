@@ -48,3 +48,42 @@ function vkMoveProjectSwitcher() {
 ["DOMContentLoaded", "turbo:load", "turbo:render"].forEach((evt) => document.addEventListener(evt, vkMoveProjectSwitcher));
 new MutationObserver(vkMoveProjectSwitcher).observe(document.documentElement, { childList: true, subtree: true });
 vkMoveProjectSwitcher();
+
+// ---- Sidebar: expanded / collapsed (icon rail) toggle, remembered across pages ----
+(function vkSidebar() {
+  const KEY = "vk-sidebar";
+  const root = document.documentElement;
+  try { if (localStorage.getItem(KEY) === "collapsed") root.classList.add("vk-sb-collapsed"); } catch (e) {}
+
+  const ICON =
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/></svg>';
+
+  function ensureToggle() {
+    const start = document.querySelector(".op-app-header--start");
+    if (!start || start.querySelector(".vk-sb-toggle")) return;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "vk-sb-toggle";
+    btn.title = "Toggle sidebar";
+    btn.setAttribute("aria-label", "Toggle sidebar");
+    btn.innerHTML = ICON;
+    btn.addEventListener("click", () => {
+      const collapsed = root.classList.toggle("vk-sb-collapsed");
+      try { localStorage.setItem(KEY, collapsed ? "collapsed" : "expanded"); } catch (e) {}
+    });
+    start.insertBefore(btn, start.querySelector(".op-app-menu") || start.firstChild);
+  }
+
+  // tooltips for the icon rail: copy each item's label into a native title
+  function labelItems() {
+    document.querySelectorAll("#main-menu .op-menu--item-action").forEach((a) => {
+      const t = a.querySelector(".op-menu--item-title");
+      if (t && !a.title) a.title = t.textContent.trim();
+    });
+  }
+
+  function tick() { ensureToggle(); labelItems(); }
+  ["DOMContentLoaded", "turbo:load", "turbo:render"].forEach((e) => document.addEventListener(e, tick));
+  new MutationObserver(tick).observe(document.documentElement, { childList: true, subtree: true });
+  tick();
+})();
