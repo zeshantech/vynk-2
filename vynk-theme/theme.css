@@ -417,29 +417,88 @@ a.op-logo--icon.op-logo--link {
 .op-logo svg { display: none; }
 
 /* ---------------------------------------------------------------------
-   14. Login page — centered card on the soft surface
+   14. Login page — split screen: brand panel + form
    --------------------------------------------------------------------- */
-body.controller-account.action-login #content { max-width: none; padding: 0; }
+body.controller-account.action-login .op-app-header { display: none !important; }
+body.controller-account.action-login #main { height: 100vh !important; grid-template-rows: 100vh !important; }
+body.controller-account.action-login #content-wrapper {
+  margin: 0; border: 0; border-radius: 0; box-shadow: none;
+  background: var(--vk-bg) !important; height: 100vh !important;
+}
+body.controller-account.action-login #content { max-width: none; padding: 0 !important; height: 100%; }
 body.controller-account.action-login #content-body {
-  width: 100%; height: auto; min-height: 0;
-  display: flex; justify-content: center; align-items: flex-start; padding: 10vh 16px 0;
+  display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  width: 100%; min-height: 100vh; padding: 0; align-items: center;
 }
+
+/* brand panel */
+body.controller-account.action-login #content-body::before {
+  content: "Plan, track and ship together.";
+  align-self: stretch;
+  display: flex; flex-direction: column; justify-content: flex-end;
+  padding: 56px;
+  margin: 12px;
+  border-radius: 20px;
+  padding-bottom: 120px;
+  color: #ffffff;
+  font-size: 40px; line-height: 46px; font-weight: 600; letter-spacing: -0.035em;
+  background:
+    url("/__vynk/logo-white.svg") 56px 52px / 120px auto no-repeat,
+    radial-gradient(120% 80% at 0% 0%, #8f2c42 0%, transparent 55%),
+    radial-gradient(90% 70% at 100% 100%, #3a0f19 0%, transparent 60%),
+    linear-gradient(145deg, #6b1e2e 0%, #4a1420 100%);
+}
+body.controller-account.action-login #content-body { position: relative; }
+body.controller-account.action-login #content-body::after {
+  content: "Projects, tasks, boards and time tracking \2014  all in one calm workspace for your team.";
+  position: absolute; left: 68px; bottom: 60px; width: calc(51% - 140px);
+  color: rgba(255, 255, 255, 0.72); font-size: 15px; line-height: 24px;
+}
+
+/* form side */
 body.controller-account.action-login #login-form {
-  width: 100%; max-width: 400px; box-sizing: border-box;
-  padding: 32px; background: var(--vk-bg);
-  border: 1px solid var(--vk-border); border-radius: 16px; box-shadow: var(--vk-shadow-lg);
+  justify-self: center;
+  width: 100%; max-width: 380px; box-sizing: border-box;
+  padding: 0 8px; background: transparent; border: 0; box-shadow: none;
 }
-body.controller-account.action-login #login-form h1 { font-size: 22px; margin: 0 0 4px; }
+body.controller-account.action-login #login-form h1 {
+  font-size: 30px !important; line-height: 36px; font-weight: 600; letter-spacing: -0.03em; margin: 0;
+}
+body.controller-account.action-login #login-form h1::after {
+  content: "Welcome back. Enter your details to continue.";
+  display: block; margin-top: 8px;
+  font-size: 15px; font-weight: 400; letter-spacing: 0; line-height: 22px; color: var(--vk-fg-muted);
+}
 body.controller-account.action-login #login-form .form--separator { display: none; }
-body.controller-account.action-login #login-form form { margin-top: 20px; }
+body.controller-account.action-login #login-form form { margin-top: 32px; }
+body.controller-account.action-login #login-form form .FormControl-spacingWrapper { display: flex; flex-direction: column; gap: 18px; }
+body.controller-account.action-login #login-form label { font-weight: 500; font-size: 14px; color: var(--vk-fg); }
 body.controller-account.action-login #login-form input[type="text"],
 body.controller-account.action-login #login-form input[type="password"] {
-  width: 100%; box-sizing: border-box; height: 40px; padding: 0 12px;
+  width: 100%; box-sizing: border-box; height: 44px; padding: 0 14px; font-size: 15px;
+  background: var(--vk-bg) !important;
 }
-body.controller-account.action-login #login-form label { font-weight: 500; font-size: 14px; color: var(--vk-fg-soft); }
-body.controller-account.action-login #login-form form .FormControl-spacingWrapper { display: flex; flex-direction: column; gap: 14px; }
-body.controller-account.action-login #login-form input[type="submit"] { width: 100%; height: 40px; margin-top: 8px; }
-body.controller-account.action-login #login-form form a { font-size: 13px; }
+/* submit row: full-width button, links below */
+body.controller-account.action-login #login-form .d-flex.flex-justify-between {
+  flex-direction: column !important; align-items: stretch !important; gap: 16px;
+}
+body.controller-account.action-login #login-form .d-flex.flex-justify-between > div:first-child { width: 100%; }
+body.controller-account.action-login #login-form .d-flex.flex-column {
+  flex-direction: row !important; justify-content: space-between; width: 100%;
+}
+body.controller-account.action-login #login-form button[type="submit"],
+body.controller-account.action-login #login-form input[type="submit"] {
+  width: 100%; height: 44px; margin-top: 6px; font-size: 15px; font-weight: 600; letter-spacing: -0.01em;
+}
+body.controller-account.action-login #login-form form a { font-size: 13px; color: var(--vk-fg-muted); text-decoration: none; }
+body.controller-account.action-login #login-form form a:hover { color: var(--vk-primary); text-decoration: underline; }
+
+/* mobile: form only */
+@media (max-width: 900px) {
+  body.controller-account.action-login #content-body { grid-template-columns: 1fr; padding: 48px 20px; align-items: start; }
+  body.controller-account.action-login #content-body::before,
+  body.controller-account.action-login #content-body::after { display: none; }
+}
 
 /* ---------------------------------------------------------------------
    15. Inline-editable titles: borderless until hover / focus
@@ -539,3 +598,4 @@ input.-border-on-hover-only:focus {
 .op-wp-single-card--content-subject { font-weight: 500; color: var(--vk-fg); }
 .op-wp-single-card--content-id, .op-wp-single-card--content-project { color: var(--vk-fg-subtle) !important; font-size: 12px; }
 .cdk-drag-preview .op-wp-single-card { box-shadow: var(--vk-shadow-lg) !important; transform: rotate(1.5deg); }
+body.controller-account.action-login #login-form h1 { margin-bottom: 32px !important; }
