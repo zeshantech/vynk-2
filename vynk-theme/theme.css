@@ -678,7 +678,7 @@ svg.octicon:where(.octicon-arrow-left, .octicon-arrow-right, .octicon-triangle-d
 #main-menu ul.menu_root, #main-menu .main-menu--children { padding: 4px 10px !important; }
 
 #main-menu li { margin: 1px 0; }
-#main-menu .main-item-wrapper { position: relative; display: block !important; }
+#main-menu .main-item-wrapper { position: relative; }
 
 #main-menu .op-menu--item-action,
 #main-menu .main-item-wrapper > a,
@@ -771,3 +771,45 @@ svg.octicon:where(.octicon-arrow-left, .octicon-arrow-right, .octicon-triangle-d
   max-width: 260px;
 }
 .vk-header-project .op-project-select--trigger-button:hover { background: rgba(0, 0, 0, 0.05) !important; }
+
+
+/* =====================================================================
+   21. Sidebar submenus (saved views list) — same Apple style
+   ===================================================================== */
+#main-menu, #main-menu * { scrollbar-width: none; }
+#main-menu *::-webkit-scrollbar { display: none; }
+#main-menu .main-menu--children { overflow-x: hidden; }
+
+.op-submenu--title {
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  color: #8e8e93 !important;
+  padding: 14px 10px 4px !important;
+  background: transparent !important;
+}
+.op-submenu--title svg { width: 14px; height: 14px; color: #aeaeb2 !important; }
+.op-submenu--item-action {
+  display: flex !important; align-items: center; gap: 8px;
+  min-height: 32px !important;
+  padding: 0 10px !important;
+  border: 0 !important;
+  border-radius: 8px !important;
+  font-size: 13.5px !important;
+  font-weight: 450 !important;
+  color: #3a3a3c !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  transition: background-color 0.14s ease;
+}
+.op-submenu--item-action:hover { background: rgba(0, 0, 0, 0.045) !important; color: #1d1d1f !important; }
+.op-submenu--item-action.selected { background: rgba(0, 0, 0, 0.07) !important; color: #1d1d1f !important; font-weight: 550 !important; }
+.op-submenu--search input, #main-menu .op-submenu input[type="text"] {
+  height: 32px !important; border-radius: 8px !important; font-size: 13.5px !important;
+  background: rgba(0, 0, 0, 0.04) !important; border: 1px solid transparent !important; box-shadow: none !important;
+}
+.op-submenu--search input:focus, #main-menu .op-submenu input[type="text"]:focus {
+  background: #fff !important; border-color: var(--vk-border-strong) !important; box-shadow: 0 0 0 3px rgba(0,0,0,0.05) !important;
+}
+.op-submenu--title, .op-submenu--title * { text-transform: none !important; letter-spacing: 0 !important; }
