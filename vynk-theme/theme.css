@@ -1282,3 +1282,13 @@ button:focus:not(:focus-visible), a:focus:not(:focus-visible),
   #main.hidden-navigation #main-menu { box-shadow: none !important; visibility: hidden; transition: transform 0.22s ease, visibility 0s linear 0.22s; }
   #main:not(.hidden-navigation) #main-menu { visibility: visible; transition: transform 0.22s ease; }
 }
+
+/* sidebar brand = wordmark only (project switcher stays in the header) */
+.vk-sb-brand {
+  display: flex !important; align-items: center !important;
+  height: 52px !important; margin: 0 0 4px !important; padding: 0 10px !important;
+}
+.vk-brand-logo {
+  display: block; width: 90px; height: 28px;
+  background: url("/__vynk/logo.svg") left center / contain no-repeat;
+}
