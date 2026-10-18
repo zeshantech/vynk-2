@@ -1391,3 +1391,14 @@ input:focus, textarea:focus, select:focus, .FormControl-input:focus, .ng-select-
 .SegmentedControl-item, .SegmentedControl-item--selected {
   border: 0 !important; background: transparent !important; box-shadow: none !important;
 }
+
+/* segmented control: even 2px track inset, pills fill the height */
+.SegmentedControl { padding: 2px !important; gap: 2px !important; align-items: stretch !important; height: 36px !important; box-sizing: border-box; }
+.SegmentedControl-item { padding: 0 !important; margin: 0 !important; display: flex !important; }
+.SegmentedControl-item .Button { height: 32px !important; padding: 0 12px !important; margin: 0 !important; }
+
+/* header search: icon sits inside the field, aligned with the text */
+.top-menu-search .top-menu-search--button {
+  left: 12px !important; width: 16px !important; padding: 0 !important; color: #71717a !important;
+}
+.top-menu-search .ng-value-container { padding-left: 36px !important; }
