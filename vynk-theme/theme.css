@@ -1164,3 +1164,97 @@ button:focus:not(:focus-visible), a:focus:not(:focus-visible),
 @media (min-width: 900px) {
   .vk-sb-brand, html.vk-sb-collapsed .vk-sb-brand { margin: 0 0 0 0 !important; }
 }
+
+/* =====================================================================
+   27. Sidebar v3 — like shadcn "sidebar-07"
+   Desktop: toggle fully hides/shows. Mobile: drawer over the page.
+   Team-switcher card on top, chevrons visible, submenus expand inline as a tree.
+   ===================================================================== */
+@media (min-width: 900px) {
+  html.vk-sb-collapsed { --main-menu-width: 0px !important; }
+  html.vk-sb-collapsed #main-menu { display: none !important; }
+  html.vk-sb-collapsed .op-app-header { margin-left: 8px !important; }
+  html.vk-sb-collapsed #content-wrapper { margin-left: 8px !important; }
+}
+
+/* team switcher card */
+.vk-sb-brand { display: block !important; height: auto !important; padding: 0 !important; margin: 0 0 8px !important; }
+.vk-sb-brand a.op-logo--link { display: none !important; }
+.vk-team {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; height: 52px; padding: 0 10px 0 8px;
+  border: 1px solid transparent; border-radius: 10px;
+  background: transparent; cursor: pointer; text-align: left;
+  color: #09090b; font: inherit;
+  transition: background-color 0.14s ease, border-color 0.14s ease;
+}
+.vk-team:hover { background: #ececef; }
+.vk-team[aria-expanded="true"] { border-color: var(--vk-border-strong); background: var(--vk-bg); }
+.vk-team-icon {
+  flex: none; width: 34px; height: 34px; border-radius: 9px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--vk-primary);
+}
+.vk-team-icon::before {
+  content: ""; width: 18px; height: 14px;
+  background: url("/__vynk/logo-mark-white.svg") center / contain no-repeat;
+}
+.vk-team-text { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.2; }
+.vk-team-name { font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
+.vk-team-sub { font-size: 12px; color: #71717a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vk-team-chev { flex: none; width: 16px; height: 16px; color: #71717a; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+
+/* menu group label */
+#main-menu ul.menu_root::before {
+  content: "Menu"; display: block;
+  padding: 6px 10px 6px; font-size: 12px; font-weight: 500; color: #71717a;
+}
+
+/* chevrons always visible, rotate when a submenu is open */
+#main-menu .main-menu-toggler { opacity: 1 !important; color: #a1a1aa !important; }
+#main-menu .main-item-wrapper:hover .main-menu-toggler { color: #52525b !important; }
+#main-menu .main-menu-toggler svg.octicon { transition: transform 0.18s ease; }
+#main-menu li.open > .main-item-wrapper .main-menu-toggler svg.octicon { transform: rotate(90deg); }
+
+/* inline tree submenus (instead of replacing the whole list) */
+#main-menu ul.menu_root.closed > li { display: list-item !important; }
+#main-menu li.open > .main-item-wrapper { display: block !important; }
+#main-menu li.open > .main-menu--children-menu-header { display: none !important; }
+#main-menu li > ul.main-menu--children { display: none; }
+#main-menu li.open > ul.main-menu--children {
+  display: block !important;
+  margin: 2px 0 6px 18px !important;
+  padding: 0 0 0 10px !important;
+  border-left: 1px solid var(--vk-border) !important;
+}
+#main-menu li.open > ul.main-menu--children .op-submenu--search { display: none; }
+#main-menu li.open > ul.main-menu--children .op-submenu--item-action { height: 32px !important; min-height: 32px !important; font-weight: 450 !important; }
+#main-menu li.open > ul.main-menu--children .op-submenu--title { margin-top: 4px; height: 28px; }
+
+/* ---- mobile: drawer ---- */
+@media (max-width: 899px) {
+  .vk-sb-toggle { display: inline-flex !important; }
+  #menu-toggle--expand-button, #menu-toggle--collapse-button { display: none !important; }
+  #main-menu {
+    position: fixed !important; top: 0 !important; left: 0 !important; bottom: 0 !important;
+    width: 288px !important; height: 100vh !important; z-index: 1001 !important;
+    background: var(--vk-surface) !important;
+    box-shadow: 0 0 0 1px var(--vk-border), 12px 0 40px -12px rgba(10, 10, 11, 0.25);
+    transition: transform 0.22s ease;
+  }
+  #main.hidden-navigation #main-menu { transform: translateX(-105%); display: block !important; }
+  .content-overlay { position: fixed !important; inset: 0 !important; z-index: 1000 !important; background: rgba(10, 10, 11, 0.32) !important; }
+  #main-menu #menu-sidebar { padding: 10px; }
+}
+#main-menu li.open > ul.main-menu--children,
+#main-menu li.open > ul.main-menu--children > li,
+#main-menu li.open > ul.main-menu--children turbo-frame,
+#main-menu li.open > ul.main-menu--children .op-submenu,
+#main-menu li.open > ul.main-menu--children .op-submenu--body {
+  height: auto !important; max-height: none !important; min-height: 0 !important;
+  overflow: visible !important; position: static !important;
+}
+#main-menu ul.menu_root, #main-menu ul.menu_root.closed { height: auto !important; max-height: none !important; overflow: visible !important; }
+#main-menu ul.menu_root > li.open { height: auto !important; max-height: none !important; overflow: visible !important; }
+#main-menu .main-menu--children-menu-header { display: none !important; }
+#main-menu li:not(.open) > ul.main-menu--children { display: none !important; }

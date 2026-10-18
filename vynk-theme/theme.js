@@ -68,8 +68,13 @@ vkMoveProjectSwitcher();
     btn.setAttribute("aria-label", "Toggle sidebar");
     btn.innerHTML = ICON;
     btn.addEventListener("click", () => {
-      const collapsed = root.classList.toggle("vk-sb-collapsed");
-      try { localStorage.setItem(KEY, collapsed ? "collapsed" : "expanded"); } catch (e) {}
+      if (window.matchMedia("(min-width: 900px)").matches) {
+        const collapsed = root.classList.toggle("vk-sb-collapsed");
+        try { localStorage.setItem(KEY, collapsed ? "collapsed" : "expanded"); } catch (e) {}
+        return;
+      }
+      const hidden = document.querySelector("#main")?.classList.contains("hidden-navigation");
+      document.querySelector(hidden ? "#menu-toggle--expand-button" : "#menu-toggle--collapse-button")?.click();
     });
     start.insertBefore(btn, start.querySelector(".op-app-menu") || start.firstChild);
   }
@@ -88,21 +93,46 @@ vkMoveProjectSwitcher();
   tick();
 })();
 
-// ---- Sidebar brand: Vynk logo at the top of the sidebar (desktop dashboard layout) ----
+// ---- Sidebar team switcher: Vynk card on top of the sidebar; opens the project switcher ----
 function vkSidebarBrand() {
   const sidebar = document.querySelector("#main-menu #menu-sidebar");
-  if (!sidebar || sidebar.querySelector(".vk-sb-brand")) return;
-  const logo = document.querySelector(".op-app-header a.op-logo--link:not(.op-logo--icon)");
-  const brand = document.createElement("div");
-  brand.className = "vk-sb-brand";
-  const link = document.createElement("a");
-  link.className = "op-logo--link";
-  link.href = logo ? logo.getAttribute("href") : "/";
-  link.setAttribute("aria-label", "Home");
-  link.textContent = "Home";
-  brand.appendChild(link);
-  sidebar.prepend(brand);
+  if (!sidebar) return;
+  let brand = sidebar.querySelector(".vk-sb-brand");
+  if (!brand) {
+    brand = document.createElement("div");
+    brand.className = "vk-sb-brand";
+    brand.innerHTML =
+      '<button type="button" class="vk-team" aria-label="Switch project">' +
+      '<span class="vk-team-icon"></span>' +
+      '<span class="vk-team-text"><span class="vk-team-name">Vynk</span><span class="vk-team-sub"></span></span>' +
+      '<svg class="vk-team-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></svg>' +
+      "</button>";
+    brand.querySelector(".vk-team").addEventListener("click", () => {
+      document.querySelector("#projects-menu")?.click();
+    });
+    sidebar.prepend(brand);
+  }
+  const project = document.querySelector("#projects-menu")?.textContent.trim() || "All projects";
+  const sub = brand.querySelector(".vk-team-sub");
+  if (sub.textContent !== project) sub.textContent = project;
 }
 ["DOMContentLoaded", "turbo:load", "turbo:render"].forEach((e) => document.addEventListener(e, vkSidebarBrand));
 new MutationObserver(vkSidebarBrand).observe(document.documentElement, { childList: true, subtree: true });
 vkSidebarBrand();
+
+// ---- Inline submenus: clicking the chevron of an open item collapses it again ----
+document.addEventListener(
+  "click",
+  (event) => {
+    const toggler = event.target.closest("#main-menu .main-menu-toggler");
+    if (!toggler) return;
+    const li = toggler.closest("li");
+    if (!li || !li.classList.contains("open")) return;
+    const back = li.querySelector(".main-menu--arrow-left-to-project");
+    if (!back) return;
+    event.preventDefault();
+    event.stopPropagation();
+    back.click();
+  },
+  true
+);
