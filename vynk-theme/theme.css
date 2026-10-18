@@ -813,3 +813,77 @@ svg.octicon:where(.octicon-arrow-left, .octicon-arrow-right, .octicon-triangle-d
   background: #fff !important; border-color: var(--vk-border-strong) !important; box-shadow: 0 0 0 3px rgba(0,0,0,0.05) !important;
 }
 .op-submenu--title, .op-submenu--title * { text-transform: none !important; letter-spacing: 0 !important; }
+
+
+/* =====================================================================
+   22. Icon-font icons (toolbar, menus) -> Lucide
+   ===================================================================== */
+i.icon-settings::before,
+i.icon-columns::before,
+i.icon-sort-by::before,
+i.icon-group-by::before,
+i.icon-edit::before,
+i.icon-save::before,
+i.icon-delete::before,
+i.icon-export::before,
+i.icon-watched::before,
+i.icon-custom-fields::before,
+i.icon-filter::before,
+i.icon-info2::before,
+i.icon-zen-mode::before,
+i.icon-show-more::before,
+i.icon-search::before,
+i.icon-pulldown::before,
+i.icon-hierarchy::before,
+i.icon-close::before,
+i.icon-checkmark::before,
+i.icon-time::before,
+i.icon-favorite::before,
+i.icon-notification::before,
+i.icon-copy::before,
+i.icon-attachment::before,
+i.icon-upload::before,
+i.icon-reload::before,
+i.icon-resizer-vertical-lines::before,
+i.icon-add::before,
+i.icon-mail::before {
+  content: "" !important;
+  display: inline-block;
+  width: 1.15em; height: 1.15em;
+  vertical-align: -0.2em;
+  background-color: currentColor;
+  -webkit-mask: var(--vk-icon) center / contain no-repeat;
+          mask: var(--vk-icon) center / contain no-repeat;
+}
+i.icon-settings::before { --vk-icon: url("/__vynk/icons/settings-2.svg"); }
+i.icon-columns::before { --vk-icon: url("/__vynk/icons/columns-3.svg"); }
+i.icon-sort-by::before { --vk-icon: url("/__vynk/icons/arrow-up-down.svg"); }
+i.icon-group-by::before { --vk-icon: url("/__vynk/icons/rows-3.svg"); }
+i.icon-edit::before { --vk-icon: url("/__vynk/icons/pencil.svg"); }
+i.icon-save::before { --vk-icon: url("/__vynk/icons/save.svg"); }
+i.icon-delete::before { --vk-icon: url("/__vynk/icons/trash-2.svg"); }
+i.icon-export::before { --vk-icon: url("/__vynk/icons/download.svg"); }
+i.icon-watched::before { --vk-icon: url("/__vynk/icons/eye.svg"); }
+i.icon-custom-fields::before { --vk-icon: url("/__vynk/icons/list-plus.svg"); }
+i.icon-filter::before { --vk-icon: url("/__vynk/icons/funnel.svg"); }
+i.icon-info2::before { --vk-icon: url("/__vynk/icons/info.svg"); }
+i.icon-zen-mode::before { --vk-icon: url("/__vynk/icons/maximize.svg"); }
+i.icon-show-more::before { --vk-icon: url("/__vynk/icons/ellipsis-vertical.svg"); }
+i.icon-search::before { --vk-icon: url("/__vynk/icons/search.svg"); }
+i.icon-pulldown::before { --vk-icon: url("/__vynk/icons/chevron-down.svg"); }
+i.icon-hierarchy::before { --vk-icon: url("/__vynk/icons/network.svg"); }
+i.icon-close::before { --vk-icon: url("/__vynk/icons/x.svg"); }
+i.icon-checkmark::before { --vk-icon: url("/__vynk/icons/check.svg"); }
+i.icon-time::before { --vk-icon: url("/__vynk/icons/clock.svg"); }
+i.icon-favorite::before { --vk-icon: url("/__vynk/icons/star.svg"); }
+i.icon-notification::before { --vk-icon: url("/__vynk/icons/bell.svg"); }
+i.icon-copy::before { --vk-icon: url("/__vynk/icons/copy.svg"); }
+i.icon-attachment::before { --vk-icon: url("/__vynk/icons/paperclip.svg"); }
+i.icon-upload::before { --vk-icon: url("/__vynk/icons/upload.svg"); }
+i.icon-reload::before { --vk-icon: url("/__vynk/icons/refresh-cw.svg"); }
+i.icon-resizer-vertical-lines::before { --vk-icon: url("/__vynk/icons/grip-vertical.svg"); }
+i.icon-add::before { --vk-icon: url("/__vynk/icons/plus.svg"); }
+i.icon-mail::before { --vk-icon: url("/__vynk/icons/mail.svg"); }
+i.icon-action-menu::before { color: #8e8e93; }
+.dropdown-menu li:hover i.icon-action-menu::before { color: #1d1d1f; }
+i.icon-show-more::before, i.icon-pulldown::before { width: 1.05em; height: 1.05em; }
