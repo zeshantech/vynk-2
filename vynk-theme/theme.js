@@ -124,3 +124,13 @@ document.addEventListener(
   },
   true
 );
+
+// Inline submenus: load the open submenu's lazy frame right away (it may have no size to be "seen" yet)
+function vkLoadOpenSubmenus() {
+  document.querySelectorAll('#main-menu li.open > ul.main-menu--children turbo-frame[loading="lazy"]').forEach((f) => {
+    f.setAttribute("loading", "eager");
+  });
+}
+["DOMContentLoaded", "turbo:load", "turbo:render"].forEach((e) => document.addEventListener(e, vkLoadOpenSubmenus));
+new MutationObserver(vkLoadOpenSubmenus).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });
+vkLoadOpenSubmenus();

@@ -1429,3 +1429,4 @@ body[data-color-mode][data-light-theme] { --focus-outlineColor: rgba(10, 10, 11,
 }
 .work-packages--details-toolbar .button, .work-packages--details-toolbar .Button { border-radius: 8px !important; }
 .work-packages-partitioned-page--content-right, .work-packages--details { border-left: 1px solid var(--vk-border) !important; }
+#main-menu li.open > ul.main-menu--children turbo-frame { display: block !important; min-height: 1px; }
