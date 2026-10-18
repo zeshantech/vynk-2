@@ -1377,3 +1377,17 @@ a.menu-block {
 a.menu-block:hover { border-color: var(--vk-border-strong) !important; box-shadow: var(--vk-shadow-sm) !important; transform: translateY(-1px); text-decoration: none !important; }
 a.menu-block .menu-block--title { color: var(--vk-fg) !important; font-weight: 500; font-size: 14px; }
 a.menu-block svg, a.menu-block i { color: #52525b !important; }
+/* mobile overlay sidebar: no logo (the header already shows it) */
+@media (max-width: 899px) { .vk-sb-brand { display: none !important; } }
+
+/* single-frame focus: darker border + barely-there ring (no visible "double box") */
+body[data-color-mode][data-light-theme] { --vk-ring: rgba(113, 113, 122, 0.10); }
+input:focus, textarea:focus, select:focus, .FormControl-input:focus, .ng-select-focused .ng-select-container {
+  box-shadow: 0 0 0 2px var(--vk-ring) !important;
+}
+.op-project-select--body .FormControl-input:focus { box-shadow: none !important; border-color: #a1a1aa !important; }
+
+/* segmented control: only the inner button is the "pill" */
+.SegmentedControl-item, .SegmentedControl-item--selected {
+  border: 0 !important; background: transparent !important; box-shadow: none !important;
+}
