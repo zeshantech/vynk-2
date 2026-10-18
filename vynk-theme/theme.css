@@ -1129,3 +1129,24 @@ i.icon-hierarchy::before { margin-right: 8px; width: 1em; height: 1em; }
 @keyframes vk-pop { from { opacity: 0; transform: translateY(-4px) scale(0.98); } to { opacity: 1; transform: none; } }
 .op-app-header--end dialog.Overlay--placement-right, .op-app-header--end dialog.Overlay--placement-right * { scrollbar-width: none; }
 .op-app-header--end dialog.Overlay--placement-right .Overlay-body { overflow-x: hidden !important; }
+
+/* =====================================================================
+   26. Compact brand row + quiet focus rings
+   ===================================================================== */
+@media (min-width: 900px) {
+  .vk-sb-brand { height: 40px; margin: 14px 8px 6px; padding: 0 10px; }
+  .vk-sb-brand a.op-logo--link { height: 20px; width: 76px !important; background-size: 68px auto !important; }
+  html.vk-sb-collapsed .vk-sb-brand { height: 40px; margin: 14px 8px 6px; }
+  html.vk-sb-collapsed .vk-sb-brand a.op-logo--link { width: 20px !important; height: 20px; }
+}
+
+/* mouse clicks don't leave rings; keyboard focus gets a soft neutral ring */
+button:focus:not(:focus-visible), a:focus:not(:focus-visible),
+.Button:focus:not(:focus-visible), [role="button"]:focus:not(:focus-visible) {
+  outline: none !important;
+  box-shadow: none !important;
+}
+.vk-sb-toggle:focus-visible, .op-app-header button:focus-visible, #main-menu a:focus-visible {
+  outline: none !important;
+  box-shadow: 0 0 0 2px var(--vk-bg), 0 0 0 4px rgba(10, 10, 11, 0.18) !important;
+}
