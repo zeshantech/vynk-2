@@ -1160,3 +1160,7 @@ button:focus:not(:focus-visible), a:focus:not(:focus-visible),
     flex: none; overflow: hidden;
   }
 }
+/* brand row starts at the same top as the header card (sidebar already has 8px padding) */
+@media (min-width: 900px) {
+  .vk-sb-brand, html.vk-sb-collapsed .vk-sb-brand { margin: 0 0 0 0 !important; }
+}
