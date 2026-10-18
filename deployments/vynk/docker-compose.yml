@@ -1,0 +1,29 @@
+# Vynk (OpenProject) production stack.
+# - openproject: official all-in-one image; external Postgres via DATABASE_URL (Neon)
+# - proxy: nginx that injects the Vynk theme (vynk-theme/) and is reached by the server's Caddy on shared_net as "vynk-op"
+services:
+  openproject:
+    image: openproject/openproject:${OP_TAG:-17}
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - op_assets:/var/openproject/assets
+
+  proxy:
+    image: nginx:alpine
+    restart: unless-stopped
+    depends_on: [openproject]
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./vynk-theme:/theme:ro
+    networks:
+      default:
+      shared_net:
+        aliases: [vynk-op]
+
+networks:
+  shared_net:
+    external: true
+
+volumes:
+  op_assets:

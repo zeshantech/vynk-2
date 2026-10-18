@@ -1,0 +1,82 @@
+name: Vynk Deploy
+
+# Deploys Vynk (OpenProject + Vynk theme) to the production server over SSH, secrets from Infisical.
+# Off until repository variable DEPLOY_ENABLED=true. Set STOP_PLANE=true to stop the old Plane stack (~/vynk) on deploy.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: vynk-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: ${{ vars.DEPLOY_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create deploy folder
+        run: mkdir -p deploy
+
+      - name: Fetch secrets from Infisical
+        uses: Infisical/secrets-action@v1.0.18
+        with:
+          method: universal
+          client-id: ${{ secrets.INFISICAL_CLIENT_ID }}
+          client-secret: ${{ secrets.INFISICAL_CLIENT_SECRET }}
+          domain: ${{ vars.INFISICAL_DOMAIN || 'https://app.infisical.com' }}
+          project-id: ${{ vars.INFISICAL_PROJECT_ID }}
+          env-slug: ${{ vars.INFISICAL_ENV || 'prod' }}
+          secret-path: ${{ vars.INFISICAL_PATH || '/openproject' }}
+          export-type: file
+          file-output-path: /deploy/.env
+
+      - name: Prepare bundle
+        run: |
+          set -euo pipefail
+          test -s deploy/.env || { echo "Infisical returned no secrets"; exit 1; }
+          cp deployments/vynk/docker-compose.yml deployments/vynk/nginx.conf deploy/
+          tar -czf deploy/vynk-theme.tgz --exclude=nginx.conf --exclude=README.md vynk-theme
+          chmod 600 deploy/.env
+
+      - name: Upload and start
+        env:
+          TARGET: ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          SSHPASS: ${{ secrets.DEPLOY_SSH_PASSWORD }}
+          STOP_PLANE: ${{ vars.STOP_PLANE }}
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y sshpass >/dev/null
+          install -m 700 -d ~/.ssh
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+          OPTS="-o PubkeyAuthentication=no -o StrictHostKeyChecking=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=60"
+          SSH="sshpass -e ssh $OPTS"
+          SCP="sshpass -e scp $OPTS"
+          $SSH "$TARGET" "mkdir -p ~/vynk-op && chmod 700 ~/vynk-op"
+          $SCP deploy/docker-compose.yml deploy/nginx.conf deploy/.env deploy/vynk-theme.tgz "$TARGET":~/vynk-op/
+          $SSH "$TARGET" "cd ~/vynk-op && chmod 600 .env && rm -rf vynk-theme && tar -xzf vynk-theme.tgz && rm vynk-theme.tgz"
+          if [ "${STOP_PLANE:-}" = "true" ]; then
+            $SSH "$TARGET" "if [ -f ~/vynk/docker-compose.yml ]; then cd ~/vynk && docker compose down --remove-orphans || true; fi"
+          fi
+          $SSH "$TARGET" "cd ~/vynk-op && (for i in 1 2 3; do docker compose pull && break || sleep 15; done) && docker compose up -d --remove-orphans && docker compose exec -T proxy nginx -s reload || true"
+
+      - name: Health check (first start runs migrations; can take several minutes)
+        run: |
+          set -euo pipefail
+          host=$(grep '^OPENPROJECT_HOST__NAME=' deploy/.env | cut -d= -f2- | tr -d "'\"\r")
+          url="https://$host/health_checks/default"
+          for i in $(seq 1 90); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$url" || true)
+            [ "$code" = "200" ] && { echo "healthy: $url"; exit 0; }
+            sleep 10
+          done
+          echo "health check failed for $url (last status: $code)"; exit 1
