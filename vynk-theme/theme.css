@@ -219,14 +219,7 @@ body.controller-account.action-login #content-wrapper { margin: 0; border: 0; bo
 }
 #main-menu svg, #main-menu .op-menu--item-icon { color: var(--vk-fg-muted); }
 #main-menu .selected svg { color: var(--vk-fg); }
-/* sidebar section titles ("Default", "Public"…) */
-#main-menu .op-sidemenu--title, #main-menu .op-submenu--title, .op-sidemenu--title {
-  font-size: 11px !important;
-  font-weight: 600 !important;
-  letter-spacing: 0.04em !important;
-  text-transform: uppercase !important;
-  color: var(--vk-fg-subtle) !important;
-}
+
 /* sidebar search box */
 #main-menu input[type="text"], #main-menu input[type="search"] {
   background: var(--vk-bg) !important;
