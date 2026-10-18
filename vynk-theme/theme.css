@@ -599,3 +599,175 @@ input.-border-on-hover-only:focus {
 .op-wp-single-card--content-id, .op-wp-single-card--content-project { color: var(--vk-fg-subtle) !important; font-size: 12px; }
 .cdk-drag-preview .op-wp-single-card { box-shadow: var(--vk-shadow-lg) !important; transform: rotate(1.5deg); }
 body.controller-account.action-login #login-form h1 { margin-bottom: 32px !important; }
+
+
+/* =====================================================================
+   18. Icons — Lucide (thin stroke) replacing Primer octicons app-wide
+   ===================================================================== */
+svg.octicon-arrow-left { --vk-icon: url("/__vynk/icons/chevron-left.svg"); }
+svg.octicon-arrow-right { --vk-icon: url("/__vynk/icons/chevron-right.svg"); }
+svg.octicon-triangle-down { --vk-icon: url("/__vynk/icons/chevron-down.svg"); }
+svg.octicon-book { --vk-icon: url("/__vynk/icons/book-open.svg"); }
+svg.octicon-briefcase { --vk-icon: url("/__vynk/icons/briefcase-business.svg"); }
+svg.octicon-comment-discussion { --vk-icon: url("/__vynk/icons/messages-square.svg"); }
+svg.octicon-gear { --vk-icon: url("/__vynk/icons/settings.svg"); }
+svg.octicon-history { --vk-icon: url("/__vynk/icons/history.svg"); }
+svg.octicon-home { --vk-icon: url("/__vynk/icons/house.svg"); }
+svg.octicon-info { --vk-icon: url("/__vynk/icons/house.svg"); }
+svg.octicon-inbox { --vk-icon: url("/__vynk/icons/inbox.svg"); }
+svg.octicon-link-external { --vk-icon: url("/__vynk/icons/arrow-up-right.svg"); }
+svg.octicon-megaphone { --vk-icon: url("/__vynk/icons/megaphone.svg"); }
+svg.octicon-milestone { --vk-icon: url("/__vynk/icons/milestone.svg"); }
+svg.octicon-note { --vk-icon: url("/__vynk/icons/sticky-note.svg"); }
+svg.octicon-op-boards { --vk-icon: url("/__vynk/icons/square-kanban.svg"); }
+svg.octicon-op-budget { --vk-icon: url("/__vynk/icons/wallet.svg"); }
+svg.octicon-op-cost-reports { --vk-icon: url("/__vynk/icons/chart-column.svg"); }
+svg.octicon-op-enterprise-addons { --vk-icon: url("/__vynk/icons/sparkles.svg"); }
+svg.octicon-op-glossar { --vk-icon: url("/__vynk/icons/book-a.svg"); }
+svg.octicon-op-grid-menu { --vk-icon: url("/__vynk/icons/layout-grid.svg"); }
+svg.octicon-op-shortcuts { --vk-icon: url("/__vynk/icons/keyboard.svg"); }
+svg.octicon-op-team-planner { --vk-icon: url("/__vynk/icons/calendar-range.svg"); }
+svg.octicon-op-view-list { --vk-icon: url("/__vynk/icons/list-checks.svg"); }
+svg.octicon-op-view-modal { --vk-icon: url("/__vynk/icons/panel-right.svg"); }
+svg.octicon-op-view-timeline { --vk-icon: url("/__vynk/icons/chart-gantt.svg"); }
+svg.octicon-people { --vk-icon: url("/__vynk/icons/users.svg"); }
+svg.octicon-person { --vk-icon: url("/__vynk/icons/circle-user.svg"); }
+svg.octicon-person-add { --vk-icon: url("/__vynk/icons/user-plus.svg"); }
+svg.octicon-plus { --vk-icon: url("/__vynk/icons/plus.svg"); }
+svg.octicon-project { --vk-icon: url("/__vynk/icons/folders.svg"); }
+svg.octicon-question { --vk-icon: url("/__vynk/icons/circle-help.svg"); }
+svg.octicon-sidebar-collapse { --vk-icon: url("/__vynk/icons/panel-left-close.svg"); }
+svg.octicon-sidebar-expand { --vk-icon: url("/__vynk/icons/panel-left-open.svg"); }
+svg.octicon-sign-out { --vk-icon: url("/__vynk/icons/log-out.svg"); }
+svg.octicon-sliders { --vk-icon: url("/__vynk/icons/sliders-horizontal.svg"); }
+svg.octicon-stopwatch { --vk-icon: url("/__vynk/icons/timer.svg"); }
+svg.octicon-x { --vk-icon: url("/__vynk/icons/x.svg"); }
+svg.octicon-file { --vk-icon: url("/__vynk/icons/file-text.svg"); }
+svg.octicon-clock { --vk-icon: url("/__vynk/icons/clock.svg"); }
+svg.octicon[class*="octicon-"] {
+  -webkit-mask: var(--vk-icon, none) center / 100% 100% no-repeat;
+          mask: var(--vk-icon, none) center / 100% 100% no-repeat;
+}
+svg.octicon[class*="octicon-"]:where(.octicon-arrow-left, .octicon-arrow-right, .octicon-triangle-down, .octicon-book,
+  .octicon-briefcase, .octicon-comment-discussion, .octicon-gear, .octicon-history, .octicon-home, .octicon-info,
+  .octicon-inbox, .octicon-link-external, .octicon-megaphone, .octicon-milestone, .octicon-note, .octicon-op-boards,
+  .octicon-op-budget, .octicon-op-cost-reports, .octicon-op-enterprise-addons, .octicon-op-glossar, .octicon-op-grid-menu,
+  .octicon-op-shortcuts, .octicon-op-team-planner, .octicon-op-view-list, .octicon-op-view-modal, .octicon-op-view-timeline,
+  .octicon-people, .octicon-person, .octicon-person-add, .octicon-plus, .octicon-project, .octicon-question,
+  .octicon-sidebar-collapse, .octicon-sidebar-expand, .octicon-sign-out, .octicon-sliders, .octicon-stopwatch, .octicon-x,
+  .octicon-file, .octicon-clock) {
+  background-color: currentColor;
+}
+svg.octicon:where(.octicon-arrow-left, .octicon-arrow-right, .octicon-triangle-down, .octicon-book, .octicon-briefcase,
+  .octicon-comment-discussion, .octicon-gear, .octicon-history, .octicon-home, .octicon-info, .octicon-inbox,
+  .octicon-link-external, .octicon-megaphone, .octicon-milestone, .octicon-note, .octicon-op-boards, .octicon-op-budget,
+  .octicon-op-cost-reports, .octicon-op-enterprise-addons, .octicon-op-glossar, .octicon-op-grid-menu, .octicon-op-shortcuts,
+  .octicon-op-team-planner, .octicon-op-view-list, .octicon-op-view-modal, .octicon-op-view-timeline, .octicon-people,
+  .octicon-person, .octicon-person-add, .octicon-plus, .octicon-project, .octicon-question, .octicon-sidebar-collapse,
+  .octicon-sidebar-expand, .octicon-sign-out, .octicon-sliders, .octicon-stopwatch, .octicon-x, .octicon-file,
+  .octicon-clock) > * {
+  visibility: hidden;
+}
+
+/* =====================================================================
+   19. Sidebar — minimal, premium (Apple-style)
+   ===================================================================== */
+#main-menu .main-menu--top-container hr, .main-menu--projects-divider { display: none !important; }
+#main-menu .main-menu--top-container { padding: 4px 8px 0 !important; min-height: 0 !important; }
+#main-menu .main-menu--top-container .d-flex { padding-top: 6px !important; justify-content: flex-end; }
+#main-menu ul.menu_root, #main-menu .main-menu--children { padding: 4px 10px !important; }
+
+#main-menu li { margin: 1px 0; }
+#main-menu .main-item-wrapper { position: relative; display: block !important; }
+
+#main-menu .op-menu--item-action,
+#main-menu .main-item-wrapper > a,
+#main-menu .main-menu--children a {
+  display: flex !important;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px !important;
+  padding: 0 10px !important;
+  padding-right: 30px !important;
+  border: 0 !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+  font-size: 13.5px !important;
+  font-weight: 450 !important;
+  letter-spacing: -0.006em;
+  color: #3a3a3c !important;
+  background: transparent !important;
+  transition: background-color 0.14s ease, color 0.14s ease;
+}
+#main-menu .op-menu--item-action:hover,
+#main-menu .main-item-wrapper:hover > a,
+#main-menu .main-menu--children a:hover {
+  background: rgba(0, 0, 0, 0.045) !important;
+  color: #1d1d1f !important;
+}
+#main-menu .op-menu--item-action.selected,
+#main-menu .selected > a, #main-menu a.selected,
+#main-menu .main-menu--children a.selected, #main-menu .main-menu--children .selected a {
+  background: rgba(0, 0, 0, 0.07) !important;
+  color: #1d1d1f !important;
+  font-weight: 550 !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+#main-menu .op-menu--item-action svg.octicon { width: 17px; height: 17px; margin-right: 0 !important; color: #8e8e93 !important; flex: none; }
+#main-menu .op-menu--item-action.selected svg.octicon,
+#main-menu .main-item-wrapper:hover svg.octicon { color: #1d1d1f !important; }
+
+/* chevron: overlaid, appears on hover — no layout shift, no separate hover box */
+#main-menu .main-menu-toggler {
+  position: absolute !important;
+  right: 4px; top: 50%;
+  transform: translateY(-50%);
+  width: 24px !important; height: 24px !important; min-width: 0 !important;
+  padding: 0 !important;
+  display: flex !important; align-items: center; justify-content: center;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 6px !important;
+  color: #8e8e93 !important;
+  opacity: 0;
+  transition: opacity 0.14s ease, background-color 0.14s ease;
+}
+#main-menu .main-menu-toggler svg.octicon { width: 15px; height: 15px; }
+#main-menu .main-item-wrapper:hover .main-menu-toggler { opacity: 1; }
+#main-menu .main-menu-toggler:hover { background: rgba(0, 0, 0, 0.06) !important; color: #1d1d1f !important; }
+
+/* submenu header ("‹ Work packages") */
+#main-menu .main-menu--children-menu-header {
+  align-items: center; gap: 4px;
+  padding: 10px 12px 6px !important;
+  border: 0 !important;
+}
+#main-menu .main-menu--children-menu-header a { color: #1d1d1f !important; font-weight: 600 !important; font-size: 14px !important; background: transparent !important; }
+#main-menu .main-menu--arrow-left-to-project {
+  width: 26px; height: 26px; border-radius: 7px; display: inline-flex !important; align-items: center; justify-content: center;
+  padding: 0 !important; color: #8e8e93 !important;
+}
+#main-menu .main-menu--arrow-left-to-project:hover { background: rgba(0, 0, 0, 0.06) !important; color: #1d1d1f !important; }
+#main-menu .main-menu--arrow-left-to-project svg.octicon { width: 16px; height: 16px; }
+
+/* sidebar group labels */
+#main-menu .op-sidemenu--title, .op-sidemenu--title {
+  font-size: 11.5px !important; font-weight: 500 !important; letter-spacing: 0 !important;
+  text-transform: none !important; color: #8e8e93 !important; padding-top: 14px !important;
+}
+
+/* =====================================================================
+   20. Project switcher in the header (moved by theme.js)
+   ===================================================================== */
+.vk-header-project { display: flex; align-items: center; margin-left: 6px; min-width: 0; }
+.vk-header-project::before {
+  content: ""; width: 1px; height: 18px; margin: 0 10px 0 2px;
+  background: var(--vk-border-strong); transform: rotate(18deg);
+}
+.vk-header-project .op-project-select--trigger-button {
+  height: 32px !important; padding: 0 10px !important; border-radius: 8px !important;
+  font-size: 14px !important; font-weight: 550 !important; color: #1d1d1f !important; letter-spacing: -0.01em;
+  max-width: 260px;
+}
+.vk-header-project .op-project-select--trigger-button:hover { background: rgba(0, 0, 0, 0.05) !important; }

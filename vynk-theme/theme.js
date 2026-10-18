@@ -26,3 +26,25 @@ document.addEventListener(
   },
   true
 );
+
+// Move the project switcher from the sidebar into the header, next to the logo.
+function vkMoveProjectSwitcher() {
+  const trigger = document.querySelector("#main-menu #projects-menu");
+  const headerStart = document.querySelector(".op-app-header--start");
+  if (!trigger || !headerStart || document.querySelector(".op-app-header .vk-header-project:not(.Overlay *)")) return;
+
+  const block = trigger.closest(".overflow-hidden") || trigger.parentElement;
+  const slot = document.createElement("div");
+  slot.className = "vk-header-project";
+  slot.appendChild(block);
+
+  const logo = [...headerStart.querySelectorAll(":scope > .op-logo, :scope > * > .op-logo")].find(
+    (el) => !el.closest(".Overlay") && el.getBoundingClientRect().width > 0
+  );
+  if (logo) logo.after(slot);
+  else headerStart.appendChild(slot);
+}
+
+["DOMContentLoaded", "turbo:load", "turbo:render"].forEach((evt) => document.addEventListener(evt, vkMoveProjectSwitcher));
+new MutationObserver(vkMoveProjectSwitcher).observe(document.documentElement, { childList: true, subtree: true });
+vkMoveProjectSwitcher();
