@@ -1292,3 +1292,58 @@ button:focus:not(:focus-visible), a:focus:not(:focus-visible),
   display: block; width: 90px; height: 28px;
   background: url("/__vynk/logo.svg") left center / contain no-repeat;
 }
+
+/* =====================================================================
+   29. Polish pass
+   ===================================================================== */
+/* widget titles (My page, dashboards): not the 24px page-title style */
+.op-widget-box--header-title .editable-toolbar-title--input,
+.op-widget-box--header-title input,
+.op-widget-box--header-title-wrapper {
+  font-size: 15px !important; line-height: 22px !important; height: 22px !important;
+  font-weight: 600 !important; letter-spacing: -0.01em !important; color: var(--vk-fg) !important;
+}
+
+/* neutral focus ring (shadcn): soft grey, no coloured glow */
+body[data-color-mode][data-light-theme] { --vk-ring: rgba(113, 113, 122, 0.18); }
+input:focus, textarea:focus, select:focus, .FormControl-input:focus,
+.ng-select-focused .ng-select-container {
+  border-color: #a1a1aa !important;
+  box-shadow: 0 0 0 3px var(--vk-ring) !important;
+}
+
+/* dashboard grid "add widget" zones: invisible until hover */
+.grid--area.-addable { border-color: transparent !important; background: transparent !important; }
+.grid--area.-addable:hover { border: 1px dashed var(--vk-border-strong) !important; border-radius: 12px; }
+.grid--area.-addable .grid--widget-add { opacity: 0; transition: opacity 0.15s; }
+.grid--area.-addable:hover .grid--widget-add { opacity: 1; }
+
+/* project switcher popover: compact, calm */
+.op-project-select--body { padding: 8px !important; }
+.op-project-select--body .FilterableTreeViewLayout { gap: 6px !important; }
+.op-project-select--body .FormControl-input {
+  height: 34px !important; font-size: 14px !important;
+  background: var(--vk-muted) !important; border-color: transparent !important; box-shadow: none !important;
+}
+.op-project-select--body .FormControl-input:focus {
+  background: var(--vk-bg) !important; border-color: var(--vk-border-strong) !important; box-shadow: 0 0 0 3px var(--vk-ring) !important;
+}
+.SegmentedControl {
+  background: var(--vk-muted) !important; border: 0 !important; border-radius: 9px !important; padding: 2px !important;
+  box-shadow: none !important;
+}
+.SegmentedControl-item { border-radius: 7px !important; }
+.SegmentedControl-item .Button { height: 30px !important; font-size: 13px !important; font-weight: 500 !important; color: var(--vk-fg-muted) !important; border-radius: 7px !important; }
+.SegmentedControl-item--selected .Button {
+  background: var(--vk-bg) !important; color: var(--vk-fg) !important;
+  box-shadow: 0 1px 2px rgba(10, 10, 11, 0.08), 0 0 0 1px rgba(10, 10, 11, 0.04) !important;
+}
+.SegmentedControl-item:not(:last-child)::after, .SegmentedControl-item::before { display: none !important; }
+.TreeViewItemContent {
+  min-height: 34px !important; border-radius: 8px !important; padding-left: 10px !important;
+  font-size: 14px !important; color: var(--vk-fg-soft) !important;
+}
+.TreeViewItemContent:hover { background: var(--vk-hover) !important; color: var(--vk-fg) !important; }
+.TreeViewItem[aria-current="true"] > .TreeViewItemContent,
+.TreeViewItemContent[aria-current="true"] { background: #ececef !important; color: var(--vk-fg) !important; font-weight: 600 !important; }
+.TreeViewItemContent::after { display: none !important; }
