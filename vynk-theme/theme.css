@@ -1,5 +1,7 @@
-/* Vynk modern theme for OpenProject — shadcn/ui-inspired (zinc neutrals + burgundy accent).
-   Appearance only. Loaded after OpenProject's own CSS. */
+/* =====================================================================
+   Vynk theme for OpenProject — modern "inset" layout, shadcn/ui style.
+   Appearance + UI only; no core changes. Loaded after OpenProject's CSS.
+   ===================================================================== */
 
 @font-face {
   font-family: "Inter";
@@ -8,207 +10,424 @@
   font-display: swap;
 }
 
+/* ---------------------------------------------------------------------
+   1. Tokens
+   --------------------------------------------------------------------- */
 :root,
 body,
-body.theme-core_design {
-  /* ---- tokens ---- */
+body[data-color-mode][data-light-theme] {
   --vk-bg: #ffffff;
-  --vk-bg-subtle: #fafafa;
+  --vk-surface: #f7f7f8;          /* app shell (header + sidebar) */
   --vk-muted: #f4f4f5;
-  --vk-border: #e4e4e7;
+  --vk-hover: #efeff1;
+  --vk-border: #e7e7ea;
   --vk-border-strong: #d4d4d8;
-  --vk-fg: #09090b;
-  --vk-fg-muted: #71717a;
+  --vk-fg: #0a0a0b;
   --vk-fg-soft: #3f3f46;
+  --vk-fg-muted: #71717a;
+  --vk-fg-subtle: #a1a1aa;
   --vk-primary: #6b1e2e;
-  --vk-primary-hover: #571826;
-  --vk-primary-soft: #f8eef0;
-  --vk-ring: rgba(107, 30, 46, 0.25);
+  --vk-primary-hover: #5a1826;
+  --vk-primary-soft: #f7edef;
+  --vk-ring: rgba(107, 30, 46, 0.22);
+  --vk-radius-sm: 6px;
   --vk-radius: 8px;
-  --vk-shadow-sm: 0 1px 2px rgba(9, 9, 11, 0.05);
-  --vk-shadow-md: 0 4px 12px rgba(9, 9, 11, 0.08);
+  --vk-radius-lg: 12px;
+  --vk-shadow-xs: 0 1px 2px rgba(10, 10, 11, 0.04);
+  --vk-shadow-sm: 0 1px 3px rgba(10, 10, 11, 0.06), 0 1px 2px rgba(10, 10, 11, 0.04);
+  --vk-shadow-lg: 0 12px 32px -8px rgba(10, 10, 11, 0.16), 0 4px 8px -4px rgba(10, 10, 11, 0.06);
+  --vk-font: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
 
-  /* ---- OpenProject variable overrides ---- */
-  --body-font-family: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --fontStack-system: var(--body-font-family);
-  --fontStack-sansSerif: var(--body-font-family);
-  --fontStack-sansSerifDisplay: var(--body-font-family);
+/* Primer design tokens (drive buttons, inputs, menus, dialogs, labels) */
+body[data-color-mode][data-light-theme] {
+  --fontStack-system: var(--vk-font) !important;
+  --fontStack-sansSerif: var(--vk-font) !important;
+  --fontStack-sansSerifDisplay: var(--vk-font) !important;
+
+  --bgColor-default: var(--vk-bg) !important;
+  --bgColor-muted: var(--vk-muted) !important;
+  --bgColor-inset: var(--vk-surface) !important;
+  --bgColor-emphasis: #18181b !important;
+  --bgColor-accent-emphasis: var(--vk-primary) !important;
+  --bgColor-accent-muted: var(--vk-primary-soft) !important;
+  --borderColor-default: var(--vk-border) !important;
+  --borderColor-muted: var(--vk-border) !important;
+  --borderColor-emphasis: var(--vk-border-strong) !important;
+  --borderColor-accent-emphasis: var(--vk-primary) !important;
+  --fgColor-default: var(--vk-fg) !important;
+  --fgColor-muted: var(--vk-fg-muted) !important;
+  --fgColor-accent: var(--vk-primary) !important;
+  --fgColor-link: var(--vk-primary) !important;
+
+  --borderRadius-small: var(--vk-radius-sm) !important;
+  --borderRadius-medium: var(--vk-radius) !important;
+  --borderRadius-default: var(--vk-radius) !important;
+  --borderRadius-large: var(--vk-radius-lg) !important;
+  --overlay-borderRadius: var(--vk-radius-lg) !important;
+
+  --control-bgColor-rest: var(--vk-bg) !important;
+  --control-bgColor-hover: var(--vk-muted) !important;
+  --control-bgColor-active: var(--vk-hover) !important;
+  --control-borderColor-rest: var(--vk-border) !important;
+  --control-borderColor-emphasis: var(--vk-border-strong) !important;
+  --control-transparent-bgColor-hover: var(--vk-hover) !important;
+  --control-transparent-bgColor-active: var(--vk-border) !important;
+  --control-transparent-bgColor-selected: var(--vk-hover) !important;
+  --control-checked-bgColor-rest: var(--vk-primary) !important;
+  --control-checked-bgColor-hover: var(--vk-primary-hover) !important;
+  --control-checked-bgColor-active: var(--vk-primary-hover) !important;
+  --focus-outlineColor: var(--vk-primary) !important;
+
+  --button-default-bgColor-rest: var(--vk-bg) !important;
+  --button-default-bgColor-hover: var(--vk-muted) !important;
+  --button-default-bgColor-active: var(--vk-hover) !important;
+  --button-default-borderColor-rest: var(--vk-border) !important;
+  --button-default-borderColor-hover: var(--vk-border-strong) !important;
+  --button-default-shadow-resting: var(--vk-shadow-xs) !important;
+  --button-primary-bgColor-rest: var(--vk-primary) !important;
+  --button-primary-bgColor-hover: var(--vk-primary-hover) !important;
+  --button-primary-bgColor-active: var(--vk-primary-hover) !important;
+  --button-primary-borderColor-rest: transparent !important;
+  --button-primary-borderColor-hover: transparent !important;
+  --button-primary-shadow-selected: none !important;
+  --button-invisible-bgColor-hover: var(--vk-hover) !important;
+  --button-invisible-iconColor-rest: var(--vk-fg-muted) !important;
+
+  --overlay-backdrop-bgColor: rgba(10, 10, 11, 0.32) !important;
+  --underlineNav-borderColor-active: var(--vk-fg) !important;
+
+  /* OpenProject's own variables */
+  --body-font-family: var(--vk-font);
   --body-background: var(--vk-bg);
   --body-font-color: var(--vk-fg);
-
-  --borderRadius-small: 6px;
-  --borderRadius-medium: 8px;
-  --borderRadius-default: 8px;
-  --borderRadius-large: 12px;
-
   --accent-color: var(--vk-primary);
   --accent-color--major1: var(--vk-primary-hover);
-  --accent-color--major2: #43121d;
-  --accent-color--minor1: #a05563;
   --accent-color--minor2: var(--vk-primary-soft);
   --primary-button-color: var(--vk-primary);
   --primary-button-color--major1: var(--vk-primary-hover);
-  --primary-button-color--minor1: #8a3a4a;
-  --primary-button-color--minor2: var(--vk-primary-soft);
-
-  --header-bg-color: var(--vk-bg);
-  --header-border-bottom-color: var(--vk-border);
+  --header-bg-color: var(--vk-surface);
+  --header-border-bottom-color: transparent;
+  --header-border-bottom-width: 0;
   --header-item-font-color: var(--vk-fg-soft);
   --header-item-font-hover-color: var(--vk-fg);
-
-  --main-menu-bg-color: var(--vk-bg-subtle);
-  --main-menu-border-color: var(--vk-border);
+  --main-menu-bg-color: var(--vk-surface);
+  --main-menu-border-color: transparent;
+  --main-menu-border-width: 0;
   --main-menu-font-color: var(--vk-fg-soft);
   --main-menu-selected-font-color: var(--vk-fg);
-  --main-menu-bg-selected-background: var(--vk-muted);
+  --main-menu-bg-selected-background: var(--vk-bg);
   --main-menu-hover-border-color: transparent;
   --main-menu-bg-selected-border: transparent;
+  --main-menu-font-size: 14px;
   --breadcrumb-font-color: var(--vk-fg-muted);
 }
 
+/* ---------------------------------------------------------------------
+   2. Base
+   --------------------------------------------------------------------- */
 html, body {
-  font-family: var(--body-font-family);
+  font-family: var(--vk-font);
   color: var(--vk-fg);
   -webkit-font-smoothing: antialiased;
-  letter-spacing: -0.005em;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "cv11", "ss01";
+  background: var(--vk-surface);
 }
-
-/* ---------- header ---------- */
-.op-app-header {
-  box-shadow: none;
-  border-bottom: 1px solid var(--vk-border);
-  background: var(--vk-bg);
-}
-
-/* ---------- headings ---------- */
-h1, h2, h3, .op-title, .PageHeader-title {
-  letter-spacing: -0.02em;
-  font-weight: 600;
-  color: var(--vk-fg);
-}
-
-/* ---------- links ---------- */
-a { color: var(--vk-primary); }
+::selection { background: var(--vk-primary-soft); }
+a { color: var(--vk-primary); text-underline-offset: 2px; }
 a:hover { color: var(--vk-primary-hover); }
 
-/* ---------- inputs ---------- */
-input[type="text"], input[type="password"], input[type="email"], input[type="search"],
-input[type="number"], input[type="date"], input[type="url"], textarea, select,
-.form--text-field, .form--select, .TextInput, .FormControl-input {
+h1, h2, h3, h4, .PageHeader-title, .op-title {
+  color: var(--vk-fg);
+  letter-spacing: -0.02em;
+  font-weight: 600;
+}
+
+* { scrollbar-width: thin; scrollbar-color: var(--vk-border-strong) transparent; }
+
+/* ---------------------------------------------------------------------
+   3. App shell — header + sidebar on a soft surface, content as a card
+   --------------------------------------------------------------------- */
+.op-app-header {
+  background: var(--vk-surface) !important;
+  border-bottom: 0 !important;
+  box-shadow: none !important;
+}
+
+/* Search: a soft pill */
+.top-menu-search .top-menu-search--input .ng-select-container {
+  background: var(--vk-bg) !important;
   border: 1px solid var(--vk-border) !important;
   border-radius: var(--vk-radius) !important;
-  background: var(--vk-bg);
-  box-shadow: var(--vk-shadow-sm);
-  transition: border-color 0.15s, box-shadow 0.15s;
+  box-shadow: var(--vk-shadow-xs) !important;
+  height: 34px !important;
+  font-size: 14px !important;
 }
-input:focus, textarea:focus, select:focus,
-.form--text-field:focus, .TextInput:focus-within, .FormControl-input:focus {
+
+/* Header icon buttons: ghost */
+.op-app-header .Button--invisible {
+  border-radius: var(--vk-radius) !important;
+  color: var(--vk-fg-soft) !important;
+}
+.op-app-header .Button--invisible:hover { background: var(--vk-hover) !important; }
+.op-app-header .Button--primary { border-radius: var(--vk-radius) !important; color: #fff !important; }
+
+/* Shell background behind content */
+#main { background: var(--vk-surface); }
+
+/* Content: a white rounded card inset from the shell */
+#content-wrapper {
+  background: var(--vk-bg) !important;
+  margin: 0 10px 10px 0;
+  height: auto !important;
+  align-self: stretch;
+  border: 1px solid var(--vk-border);
+  border-radius: var(--vk-radius-lg);
+  box-shadow: var(--vk-shadow-xs);
+}
+#content { background: transparent !important; padding-left: 32px; padding-right: 32px; }
+body.controller-account.action-login #content-wrapper { margin: 0; border: 0; border-radius: 0; box-shadow: none; background: var(--vk-surface) !important; }
+
+/* Sidebar */
+#main-menu, .main-menu {
+  background: var(--vk-surface) !important;
+  border-right: 0 !important;
+}
+#main-menu .op-menu--item-action,
+#main-menu .main-item-wrapper > a,
+#main-menu li > a {
+  border-radius: var(--vk-radius) !important;
+  border: 1px solid transparent !important;
+  color: var(--vk-fg-soft);
+  font-weight: 500;
+  min-height: 34px;
+  transition: background-color 0.12s, color 0.12s, box-shadow 0.12s;
+}
+#main-menu .op-menu--item-action:hover,
+#main-menu li > a:hover {
+  background: var(--vk-hover) !important;
+  color: var(--vk-fg) !important;
+}
+#main-menu .op-menu--item-action.selected,
+#main-menu .selected > a,
+#main-menu a.selected {
+  background: var(--vk-bg) !important;
+  color: var(--vk-fg) !important;
+  border-color: var(--vk-border) !important;
+  box-shadow: var(--vk-shadow-xs) !important;
+}
+#main-menu svg, #main-menu .op-menu--item-icon { color: var(--vk-fg-muted); }
+#main-menu .selected svg { color: var(--vk-fg); }
+/* sidebar section titles ("Default", "Public"…) */
+#main-menu .op-sidemenu--title, #main-menu .op-submenu--title, .op-sidemenu--title {
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.04em !important;
+  text-transform: uppercase !important;
+  color: var(--vk-fg-subtle) !important;
+}
+/* sidebar search box */
+#main-menu input[type="text"], #main-menu input[type="search"] {
+  background: var(--vk-bg) !important;
+}
+
+/* ---------------------------------------------------------------------
+   4. Page header & breadcrumbs
+   --------------------------------------------------------------------- */
+.PageHeader { padding-top: 20px; padding-bottom: 8px; border-bottom: 0 !important; }
+.PageHeader-title, .PageHeader-title h1, .PageHeader-titleBar h1 {
+  font-size: 24px !important;
+  line-height: 32px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.025em !important;
+}
+.PageHeader-description { color: var(--vk-fg-muted); }
+.PageHeader-breadcrumbs, .breadcrumb, .op-breadcrumb, .Breadcrumbs { font-size: 13px; color: var(--vk-fg-muted); }
+.PageHeader-breadcrumbs a, .Breadcrumbs a { color: var(--vk-fg-muted); }
+.PageHeader-breadcrumbs a:hover, .Breadcrumbs a:hover { color: var(--vk-fg); }
+hr, .form--separator { border-color: var(--vk-border) !important; }
+
+/* ---------------------------------------------------------------------
+   5. Buttons (legacy OpenProject + Primer + spot)
+   --------------------------------------------------------------------- */
+.Button { font-weight: 500 !important; }
+.button, .spot-button, input[type="submit"] {
+  border-radius: var(--vk-radius) !important;
+  font-weight: 500;
+  transition: background-color 0.12s, border-color 0.12s, box-shadow 0.12s;
+}
+.button.-primary, .button.-highlight, input[type="submit"].button,
+.spot-button_primary, .spot-button.-primary {
+  background: var(--vk-primary) !important;
+  border-color: var(--vk-primary) !important;
+  color: #fff !important;
+  box-shadow: var(--vk-shadow-xs);
+}
+.button.-primary:hover, .button.-highlight:hover, input[type="submit"].button:hover,
+.spot-button_primary:hover { background: var(--vk-primary-hover) !important; }
+.button:not(.-primary):not(.-highlight) {
+  background: var(--vk-bg);
+  border: 1px solid var(--vk-border);
+  color: var(--vk-fg);
+  box-shadow: var(--vk-shadow-xs);
+}
+.button:not(.-primary):not(.-highlight):hover { background: var(--vk-muted); border-color: var(--vk-border-strong); }
+
+/* ---------------------------------------------------------------------
+   6. Inputs
+   --------------------------------------------------------------------- */
+input[type="text"], input[type="password"], input[type="email"], input[type="search"],
+input[type="number"], input[type="date"], input[type="url"], textarea, select,
+.form--text-field, .form--select, .FormControl-input, .FormControl-select, .ng-select-container {
+  border: 1px solid var(--vk-border) !important;
+  border-radius: var(--vk-radius) !important;
+  background-color: var(--vk-bg);
+  box-shadow: var(--vk-shadow-xs);
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+input:focus, textarea:focus, select:focus, .FormControl-input:focus,
+.ng-select-focused .ng-select-container {
   outline: none !important;
   border-color: var(--vk-primary) !important;
   box-shadow: 0 0 0 3px var(--vk-ring) !important;
 }
+.FormControl-label, label.form--label { font-weight: 500; color: var(--vk-fg-soft); }
 
-/* ---------- buttons ---------- */
-.button, .Button, .spot-button, input[type="submit"], button.button {
-  border-radius: var(--vk-radius);
-  font-weight: 500;
-  transition: background-color 0.15s, border-color 0.15s, box-shadow 0.15s;
+/* inner input of ng-select dropdowns must stay borderless (the container is the box) */
+.ng-select .ng-input input, .ng-select input[type="text"] {
+  border: 0 !important; box-shadow: none !important; background: transparent !important; height: auto !important;
 }
-.button.-primary, .button.-highlight, input[type="submit"].button,
-.Button--primary, .spot-button_primary, .spot-button.-primary {
-  background: var(--vk-primary);
-  border-color: var(--vk-primary);
-  color: #fff;
-  box-shadow: var(--vk-shadow-sm);
-}
-.button.-primary:hover, .button.-highlight:hover, input[type="submit"].button:hover,
-.Button--primary:hover, .spot-button_primary:hover {
-  background: var(--vk-primary-hover);
-  border-color: var(--vk-primary-hover);
-}
-.button:not(.-primary):not(.-highlight), .Button--secondary, .Button--default {
-  background: var(--vk-bg);
-  border: 1px solid var(--vk-border);
-  color: var(--vk-fg);
-  box-shadow: var(--vk-shadow-sm);
-}
-.button:not(.-primary):not(.-highlight):hover, .Button--secondary:hover {
-  background: var(--vk-muted);
-}
+.ng-select .ng-placeholder { color: var(--vk-fg-subtle) !important; }
 
-/* ---------- cards / panels ---------- */
-.Box, .op-card, .widget-box, .grid--widget, .spot-card, .op-sidebar--box {
-  border: 1px solid var(--vk-border);
-  border-radius: 12px;
-  box-shadow: var(--vk-shadow-sm);
-  background: var(--vk-bg);
-}
-
-/* ---------- menus / popovers / dialogs ---------- */
-.dropdown-menu, .ActionList, .Overlay, .op-modal, .spot-modal, .ng-dropdown-panel, .SelectPanel {
+/* ---------------------------------------------------------------------
+   7. Cards, widgets, boxes
+   --------------------------------------------------------------------- */
+.widget-box, .Box, .op-card, .grid--widget, .spot-card, .op-sidebar--box {
   border: 1px solid var(--vk-border) !important;
-  border-radius: 12px !important;
-  box-shadow: var(--vk-shadow-md) !important;
+  border-radius: var(--vk-radius-lg) !important;
+  box-shadow: var(--vk-shadow-xs) !important;
+  background: var(--vk-bg);
+}
+.widget-box { padding: 20px 22px !important; }
+.widget-box--header, .widget-box--header-title, .grid--widget-title, .op-widget-box--header {
+  font-size: 15px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.01em;
+  color: var(--vk-fg) !important;
+  border-bottom: 0 !important;
+}
+.widget-boxes { gap: 16px; }
+.Box-header { background: var(--vk-muted) !important; border-color: var(--vk-border) !important; }
+.blankslate, .Blankslate, .op-empty-state { color: var(--vk-fg-muted); }
+
+/* ---------------------------------------------------------------------
+   8. Menus, popovers, dialogs
+   --------------------------------------------------------------------- */
+.Overlay, .dropdown-menu, .op-modal, .spot-modal, .ng-dropdown-panel, .SelectPanel-dialog,
+.op-context-menu, .dropdown, .contextMenu, #work-package-context-menu {
+  border: 1px solid var(--vk-border) !important;
+  border-radius: var(--vk-radius-lg) !important;
+  box-shadow: var(--vk-shadow-lg) !important;
+}
+.ActionListItem, .ActionListContent { border-radius: var(--vk-radius-sm) !important; }
+.ActionListContent:hover, .op-menu--item-action:hover { background: var(--vk-hover); }
+.Overlay-header { border-bottom: 1px solid var(--vk-border); }
+.Overlay-title { font-weight: 600 !important; letter-spacing: -0.01em; }
+
+/* ---------------------------------------------------------------------
+   9. Labels, counters, badges
+   --------------------------------------------------------------------- */
+.Label, .Counter, .op-badge, .badge, .status-indicator {
+  border-radius: 9999px !important;
+  font-weight: 500 !important;
+}
+.Counter { background: var(--vk-muted) !important; color: var(--vk-fg-soft) !important; }
+
+/* ---------------------------------------------------------------------
+   10. Tables (generic + work packages)
+   --------------------------------------------------------------------- */
+table.generic-table { border-collapse: separate; border-spacing: 0; }
+table.generic-table thead th, .generic-table--sort-header-outer, .generic-table--sort-header,
+.work-package-table--container th {
+  background: var(--vk-bg) !important;
+  color: var(--vk-fg-muted) !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  border-bottom: 1px solid var(--vk-border) !important;
+}
+table.generic-table td, .wp-table--cell-td { border-bottom: 1px solid var(--vk-border) !important; border-top: 0 !important; }
+table.generic-table tbody tr:hover td,
+.wp-table--row:hover .wp-table--cell-td { background: #fafafa !important; }
+.wp-table--cell-td a, table.generic-table td a { color: var(--vk-fg); text-decoration: none; }
+.wp-table--cell-td a:hover, table.generic-table td a:hover { color: var(--vk-primary); text-decoration: underline; }
+.wp-table--row.-checked .wp-table--cell-td, .wp-table--row.-checked:hover .wp-table--cell-td {
+  background: var(--vk-primary-soft) !important;
 }
 
-/* ---------- sidebar menu items ---------- */
-#main-menu a, .main-menu--children a, .op-submenu--item-action {
-  border-radius: 6px;
+/* type / priority as soft pills */
+[class*="__hl_inline_type_"], [class*="__hl_inline_priority_"] {
+  display: inline-block;
+  text-transform: none !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  letter-spacing: 0 !important;
+  padding: 0 8px;
+  border-radius: 9999px;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  line-height: 20px;
 }
 
-/* ---------- tables ---------- */
-table.generic-table th, .op-wp-table th, .generic-table--sort-header-outer {
-  font-weight: 500;
-  color: var(--vk-fg-muted);
-  background: var(--vk-bg-subtle);
-  border-bottom: 1px solid var(--vk-border);
-}
-table.generic-table td, .wp-table--cell-td {
-  border-color: var(--vk-border);
-}
-table.generic-table tbody tr:hover, .wp-table--row:hover .wp-table--cell-td {
-  background: var(--vk-muted);
-}
+/* ---------------------------------------------------------------------
+   11. Tabs / underline nav
+   --------------------------------------------------------------------- */
+.UnderlineNav { box-shadow: inset 0 -1px 0 var(--vk-border) !important; }
+.UnderlineNav-item { font-weight: 500; color: var(--vk-fg-muted); border-radius: var(--vk-radius-sm); }
+.UnderlineNav-item:hover { background: var(--vk-hover); color: var(--vk-fg); }
+.tabrow { border-bottom: 1px solid var(--vk-border) !important; }
+.tabrow li a { font-weight: 500; color: var(--vk-fg-muted); }
+.tabrow li.selected a { color: var(--vk-fg); }
 
-/* ---------- tabs ---------- */
-.tabrow li a, .op-tab-row--link, .UnderlineNav-item {
-  font-weight: 500;
-}
+/* ---------------------------------------------------------------------
+   12. Toolbars
+   --------------------------------------------------------------------- */
+.toolbar-container { border-bottom: 0 !important; }
+.toolbar-item .button { height: 34px; }
 
-/* ---------- scrollbars ---------- */
-* { scrollbar-width: thin; scrollbar-color: var(--vk-border-strong) transparent; }
-
-/* ---------- brand logo ---------- */
-/* container carries no image; the inner link gets the Vynk wordmark (replaces OpenProject's own) */
+/* ---------------------------------------------------------------------
+   13. Brand logo (replaces OpenProject's)
+   --------------------------------------------------------------------- */
 .op-logo, .op-logo.op-logo--icon { background: none !important; }
 .op-logo--link:not(.op-logo--icon) {
   background-image: url("/__vynk/logo.svg") !important;
   background-repeat: no-repeat !important;
   background-position: left center !important;
-  background-size: contain !important;
+  background-size: 92px auto !important;
   width: 104px !important;
 }
-/* narrow/mobile layout: the V mark only */
 a.op-logo--icon.op-logo--link {
   background-image: url("/__vynk/logo-mark.svg") !important;
   background-repeat: no-repeat !important;
   background-position: center !important;
   background-size: contain !important;
-  width: 32px !important;
+  width: 28px !important;
 }
 .op-logo svg { display: none; }
 
-/* ---------- login page: centered card ---------- */
-body.controller-account.action-login { background: var(--vk-bg-subtle); }
+/* ---------------------------------------------------------------------
+   14. Login page — centered card on the soft surface
+   --------------------------------------------------------------------- */
 body.controller-account.action-login #content { max-width: none; padding: 0; }
 body.controller-account.action-login #content-body {
   width: 100%; height: auto; min-height: 0;
-  display: flex; justify-content: center; padding: 8vh 16px 0;
+  display: flex; justify-content: center; align-items: flex-start; padding: 10vh 16px 0;
 }
 body.controller-account.action-login #login-form {
   width: 100%; max-width: 400px; box-sizing: border-box;
   padding: 32px; background: var(--vk-bg);
-  border: 1px solid var(--vk-border); border-radius: 14px; box-shadow: var(--vk-shadow-md);
+  border: 1px solid var(--vk-border); border-radius: 16px; box-shadow: var(--vk-shadow-lg);
 }
 body.controller-account.action-login #login-form h1 { font-size: 22px; margin: 0 0 4px; }
 body.controller-account.action-login #login-form .form--separator { display: none; }
@@ -218,43 +437,105 @@ body.controller-account.action-login #login-form input[type="password"] {
   width: 100%; box-sizing: border-box; height: 40px; padding: 0 12px;
 }
 body.controller-account.action-login #login-form label { font-weight: 500; font-size: 14px; color: var(--vk-fg-soft); }
+body.controller-account.action-login #login-form form .FormControl-spacingWrapper { display: flex; flex-direction: column; gap: 14px; }
 body.controller-account.action-login #login-form input[type="submit"] { width: 100%; height: 40px; margin-top: 8px; }
-body.controller-account.action-login #content-body { align-items: flex-start; }
-body.controller-account.action-login #login-form form .FormControl-spacingWrapper {
-  display: flex; flex-direction: column; gap: 14px;
-}
-body.controller-account.action-login #login-form .login-links,
 body.controller-account.action-login #login-form form a { font-size: 13px; }
 
-/* ---------- work package table polish ---------- */
-.generic-table--sort-header-outer, .generic-table--sort-header, .work-package-table--container th {
+/* ---------------------------------------------------------------------
+   15. Inline-editable titles: borderless until hover / focus
+   --------------------------------------------------------------------- */
+input.-border-on-hover-only, .editable-toolbar-title--input {
+  border-color: transparent !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  font-size: 24px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.025em !important;
+  color: var(--vk-fg) !important;
+}
+input.-border-on-hover-only:hover { border-color: var(--vk-border) !important; }
+input.-border-on-hover-only:focus {
+  border-color: var(--vk-primary) !important;
+  box-shadow: 0 0 0 3px var(--vk-ring) !important;
+  background: var(--vk-bg) !important;
+}
+
+/* ---------------------------------------------------------------------
+   16. Work package detail: grouped attributes + tabs
+   --------------------------------------------------------------------- */
+.attributes-group { margin-bottom: 28px; }
+.attributes-group--header { border-bottom: 1px solid var(--vk-border) !important; margin-bottom: 8px; padding-bottom: 6px; }
+.attributes-group--header-text {
+  text-transform: none !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.01em !important;
+  color: var(--vk-fg) !important;
+}
+.attributes-key-value--key, .wp-attribute-group--attribute-key {
+  color: var(--vk-fg-muted) !important;
+  font-weight: 500 !important;
+  font-size: 13px !important;
+}
+.attributes-key-value--value-container, .inline-edit--display-field { border-radius: var(--vk-radius-sm); }
+.inline-edit--display-field:hover { background: var(--vk-muted) !important; }
+
+/* tab rows (Activity / Files / Relations …) */
+.op-tab-row { border-bottom: 1px solid var(--vk-border) !important; }
+.op-tab-row--link {
   text-transform: none !important;
   letter-spacing: 0 !important;
-  font-size: 12px !important;
+  font-size: 14px !important;
   font-weight: 500 !important;
   color: var(--vk-fg-muted) !important;
+  border-bottom-width: 2px !important;
 }
-[class*="__hl_inline_type_"], [class*="__hl_inline_priority_"] {
-  display: inline-block;
-  text-transform: none !important;
-  font-size: 12px !important;
-  font-weight: 500 !important;
-  letter-spacing: 0 !important;
-  padding: 1px 8px;
-  border-radius: 9999px;
-  background: color-mix(in srgb, currentColor 10%, transparent);
-  line-height: 20px;
-}
-.wp-table--row:hover .wp-table--cell-td, .work-package-table--container tr:hover td {
-  background: var(--vk-bg-subtle) !important;
-}
-.wp-table--cell-td { border-bottom: 1px solid var(--vk-border) !important; }
-.wp-table--cell-td a { color: var(--vk-fg); text-decoration: none; }
-.wp-table--cell-td a:hover { color: var(--vk-primary); text-decoration: underline; }
+.op-tab-row--link:hover { color: var(--vk-fg) !important; }
+.op-tab-row--link_selected { color: var(--vk-fg) !important; border-bottom-color: var(--vk-fg) !important; }
 
-/* ---------- page header / toolbar ---------- */
-.toolbar-container .toolbar .toolbar-item .button, .op-toolbar .button { height: 32px; }
-.breadcrumb, .op-breadcrumb { font-size: 13px; }
+/* description box */
+.work-packages--details--description .inline-edit--container {
+  border: 1px solid var(--vk-border); border-radius: var(--vk-radius); padding: 4px;
+}
 
-/* ---------- status pills (projects list etc.) ---------- */
-.op-status-pill, [class*="project-status"] { border-radius: 9999px; }
+/* ---------------------------------------------------------------------
+   17. Boards (Kanban): soft columns, white rounded cards
+   --------------------------------------------------------------------- */
+.boards-list--container { gap: 12px; }
+.boards-list--item .op-board-list {
+  background: var(--vk-surface);
+  border: 1px solid var(--vk-border);
+  border-radius: var(--vk-radius-lg);
+  padding: 8px;
+}
+.op-board-list--header {
+  border: 0 !important;
+  padding: 6px 6px 10px !important;
+}
+.op-board-list--header .title-container, .op-board-list--header .editable-toolbar-title--input {
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.01em !important;
+}
+.op-board-list--add-button {
+  background: transparent !important;
+  border: 1px dashed var(--vk-border-strong) !important;
+  box-shadow: none !important;
+  color: var(--vk-fg-muted) !important;
+  border-radius: var(--vk-radius) !important;
+}
+.op-board-list--add-button:hover { background: var(--vk-bg) !important; color: var(--vk-fg) !important; }
+.op-wp-single-card {
+  background: var(--vk-bg) !important;
+  border: 1px solid var(--vk-border) !important;
+  border-radius: 10px !important;
+  box-shadow: var(--vk-shadow-xs) !important;
+  transition: box-shadow 0.15s, border-color 0.15s, transform 0.15s;
+}
+.op-wp-single-card:hover {
+  border-color: var(--vk-border-strong) !important;
+  box-shadow: var(--vk-shadow-sm) !important;
+}
+.op-wp-single-card--content-subject { font-weight: 500; color: var(--vk-fg); }
+.op-wp-single-card--content-id, .op-wp-single-card--content-project { color: var(--vk-fg-subtle) !important; font-size: 12px; }
+.cdk-drag-preview .op-wp-single-card { box-shadow: var(--vk-shadow-lg) !important; transform: rotate(1.5deg); }
