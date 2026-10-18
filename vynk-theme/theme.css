@@ -1354,3 +1354,12 @@ input:focus, textarea:focus, select:focus, .FormControl-input:focus,
   font-style: normal !important; font-size: 12px !important; color: var(--vk-fg-muted) !important;
 }
 .labelFarRight .label-content { color: var(--vk-fg-soft) !important; font-weight: 500; }
+
+/* enterprise upsell banners: calm card instead of orange outline */
+.op-enterprise-banner {
+  border: 1px solid var(--vk-border) !important;
+  border-radius: 14px !important;
+  background: linear-gradient(180deg, #fbfbfc 0%, #ffffff 60%) !important;
+  box-shadow: var(--vk-shadow-xs) !important;
+}
+.op-enterprise-banner a, .op-enterprise-banner .Link { color: var(--vk-primary) !important; }
