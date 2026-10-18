@@ -179,14 +179,24 @@ table.generic-table tbody tr:hover, .wp-table--row:hover .wp-table--cell-td {
 * { scrollbar-width: thin; scrollbar-color: var(--vk-border-strong) transparent; }
 
 /* ---------- brand logo ---------- */
-.op-logo, .op-logo--icon {
+/* container carries no image; the inner link gets the Vynk wordmark (replaces OpenProject's own) */
+.op-logo, .op-logo.op-logo--icon { background: none !important; }
+.op-logo--link:not(.op-logo--icon) {
   background-image: url("/__vynk/logo.svg") !important;
   background-repeat: no-repeat !important;
   background-position: left center !important;
   background-size: contain !important;
   width: 104px !important;
 }
-.op-logo svg, .op-logo--icon svg { display: none; }
+/* narrow/mobile layout: the V mark only */
+a.op-logo--icon.op-logo--link {
+  background-image: url("/__vynk/logo-mark.svg") !important;
+  background-repeat: no-repeat !important;
+  background-position: center !important;
+  background-size: contain !important;
+  width: 32px !important;
+}
+.op-logo svg { display: none; }
 
 /* ---------- login page: centered card ---------- */
 body.controller-account.action-login { background: var(--vk-bg-subtle); }
