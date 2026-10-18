@@ -1258,3 +1258,18 @@ button:focus:not(:focus-visible), a:focus:not(:focus-visible),
 #main-menu ul.menu_root > li.open { height: auto !important; max-height: none !important; overflow: visible !important; }
 #main-menu .main-menu--children-menu-header { display: none !important; }
 #main-menu li:not(.open) > ul.main-menu--children { display: none !important; }
+
+/* =====================================================================
+   28. Small-screen header: one centred row  [toggle] [V] | [project ⌄]
+   ===================================================================== */
+.op-app-header button:has(svg.octicon-op-grid-menu) { display: none !important; }
+@media (max-width: 899px) {
+  .op-app-header { display: flex !important; align-items: center !important; height: 56px !important; padding: 0 8px !important; gap: 4px; }
+  .op-app-header--start { display: flex !important; align-items: center !important; gap: 2px; flex: 1 1 auto; min-width: 0; height: 100%; }
+  .op-app-header--start > nav.op-app-menu { display: flex !important; align-items: center !important; height: 100%; }
+  .op-app-header--center, .op-app-header--end { display: flex !important; align-items: center !important; height: 100%; }
+  .vk-sb-toggle { margin: 0 2px 0 0 !important; align-self: center; }
+  .vk-header-project { height: 100%; }
+  .vk-header-project::before { content: ""; width: 1px; height: 16px; margin: 0 6px 0 4px; background: var(--vk-border-strong); transform: none; }
+  .vk-header-project .op-project-select--trigger-button { font-size: 15px !important; max-width: 46vw; }
+}
