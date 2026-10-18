@@ -1152,3 +1152,11 @@ button:focus:not(:focus-visible), a:focus:not(:focus-visible),
   html.vk-sb-collapsed .vk-sb-brand a.op-logo--link { width: 24px !important; height: 24px; }
   #main-menu .main-menu--children-menu-header { min-height: 36px !important; padding: 0 4px 6px !important; }
 }
+/* logo box sized exactly to the wordmark (170:53) so nothing is clipped */
+@media (min-width: 900px) {
+  .vk-sb-brand a.op-logo--link {
+    width: 90px !important; height: 28px !important;
+    background-size: contain !important; background-position: left center !important;
+    flex: none; overflow: hidden;
+  }
+}
