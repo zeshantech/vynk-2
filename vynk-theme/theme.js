@@ -87,3 +87,22 @@ vkMoveProjectSwitcher();
   new MutationObserver(tick).observe(document.documentElement, { childList: true, subtree: true });
   tick();
 })();
+
+// ---- Sidebar brand: Vynk logo at the top of the sidebar (desktop dashboard layout) ----
+function vkSidebarBrand() {
+  const sidebar = document.querySelector("#main-menu #menu-sidebar");
+  if (!sidebar || sidebar.querySelector(".vk-sb-brand")) return;
+  const logo = document.querySelector(".op-app-header a.op-logo--link:not(.op-logo--icon)");
+  const brand = document.createElement("div");
+  brand.className = "vk-sb-brand";
+  const link = document.createElement("a");
+  link.className = "op-logo--link";
+  link.href = logo ? logo.getAttribute("href") : "/";
+  link.setAttribute("aria-label", "Home");
+  link.textContent = "Home";
+  brand.appendChild(link);
+  sidebar.prepend(brand);
+}
+["DOMContentLoaded", "turbo:load", "turbo:render"].forEach((e) => document.addEventListener(e, vkSidebarBrand));
+new MutationObserver(vkSidebarBrand).observe(document.documentElement, { childList: true, subtree: true });
+vkSidebarBrand();

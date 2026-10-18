@@ -1021,3 +1021,111 @@ i.icon-hierarchy::before { margin-right: 8px; width: 1em; height: 1em; }
 .generic-table--action-menu-button {
   font-size: 12px !important; font-weight: 500 !important; color: var(--vk-fg-muted) !important;
 }
+
+/* =====================================================================
+   24. Dashboard layout (shadcn "dashboard-01")
+   Sidebar full height with brand on top; header lives inside the content card.
+   ===================================================================== */
+@media (min-width: 900px) {
+  #wrapper {
+    display: grid !important;
+    grid-template-columns: var(--main-menu-width) minmax(0, 1fr) !important;
+    grid-template-rows: auto minmax(0, 1fr) !important;
+    height: 100vh !important;
+    overflow: hidden !important;
+    background: var(--vk-surface);
+  }
+  #main { display: contents !important; }
+
+  #main-menu {
+    grid-column: 1; grid-row: 1 / span 2;
+    height: 100vh !important; overflow-y: auto; overflow-x: hidden;
+  }
+
+  .op-app-header {
+    grid-column: 2; grid-row: 1;
+    height: 52px !important; min-height: 52px !important;
+    margin: 8px 8px 0 0;
+    padding: 0 12px 0 6px !important;
+    background: var(--vk-bg) !important;
+    border: 1px solid var(--vk-border) !important;
+    border-bottom-color: var(--vk-border) !important;
+    border-radius: 14px 14px 0 0;
+    box-shadow: none !important;
+  }
+
+  #content-wrapper {
+    grid-column: 2; grid-row: 2;
+    margin: 0 8px 8px 0 !important;
+    border-top: 0 !important;
+    border-radius: 0 0 14px 14px !important;
+    overflow: auto !important;
+    height: auto !important; min-height: 0 !important;
+  }
+
+  /* header start: [toggle] | [project ⌄] — logo + modules grid move out */
+  .op-app-header--start > nav.op-app-menu { display: none !important; }
+  .vk-sb-toggle { margin: 0 2px 0 0; }
+  .vk-header-project { margin-left: 0; }
+  .vk-header-project::before {
+    content: ""; width: 1px; height: 16px; margin: 0 10px 0 6px;
+    background: var(--vk-border-strong); transform: none;
+  }
+  .vk-header-project .op-project-select--trigger-button { font-size: 15px !important; font-weight: 550 !important; }
+
+  /* sidebar brand row, aligned with the header */
+  .vk-sb-brand {
+    display: flex; align-items: center;
+    height: 52px; margin: 8px 8px 4px; padding: 0 10px;
+  }
+  .vk-sb-brand a.op-logo--link {
+    display: block; height: 24px; width: 96px !important;
+    background-size: 84px auto !important; background-position: left center !important;
+    font-size: 0; color: transparent;
+  }
+  html.vk-sb-collapsed .vk-sb-brand { padding: 0; justify-content: center; margin: 8px 8px 4px; }
+  html.vk-sb-collapsed .vk-sb-brand a.op-logo--link {
+    width: 24px !important; background-image: url("/__vynk/logo-mark.svg") !important;
+    background-size: contain !important; background-position: center !important;
+  }
+}
+@media (max-width: 899px) { .vk-sb-brand { display: none; } }
+@media (min-width: 900px) {
+  .op-app-header { display: flex !important; align-items: center !important; gap: 8px; }
+  .op-app-header--start { flex: 1 1 0; min-width: 0; display: flex !important; align-items: center; height: 100%; }
+  .op-app-header--center { flex: 0 1 360px; min-width: 200px; display: flex !important; align-items: center; justify-content: center; height: 100%; }
+  .op-app-header--center .top-menu-search { width: 100%; }
+  .op-app-header--end { flex: 1 1 0; min-width: 0; display: flex !important; align-items: center; justify-content: flex-end; height: 100%; gap: 2px; }
+}
+@media (min-width: 900px) {
+  .op-app-header { width: auto !important; min-width: 0 !important; max-width: none !important; box-sizing: border-box; }
+}
+
+/* =====================================================================
+   25. Profile menu: popover under the avatar instead of a side sheet
+   ===================================================================== */
+@media (min-width: 900px) {
+  .op-app-header--end dialog.Overlay--placement-right {
+    position: fixed !important;
+    inset: 62px 16px auto auto !important;
+    margin: 0 !important;
+    width: 260px !important;
+    max-width: calc(100vw - 32px) !important;
+    height: auto !important;
+    max-height: 70vh !important;
+    border: 1px solid var(--vk-border) !important;
+    border-radius: 14px !important;
+    box-shadow: var(--vk-shadow-lg) !important;
+    transform: none !important;
+    animation: vk-pop 0.14s ease-out !important;
+    overflow: hidden;
+  }
+  .op-app-header--end dialog.Overlay--placement-right::backdrop { background: transparent !important; }
+  .op-app-header--end dialog.Overlay--placement-right .Overlay-header { padding: 12px 12px 8px; border-bottom: 0 !important; }
+  .op-app-header--end dialog.Overlay--placement-right .Overlay-closeButton { display: none !important; }
+  .op-app-header--end dialog.Overlay--placement-right .Overlay-body { padding: 4px 6px 6px; }
+  .op-app-header--end dialog.Overlay--placement-right .ActionListContent { min-height: 34px; font-size: 14px; }
+}
+@keyframes vk-pop { from { opacity: 0; transform: translateY(-4px) scale(0.98); } to { opacity: 1; transform: none; } }
+.op-app-header--end dialog.Overlay--placement-right, .op-app-header--end dialog.Overlay--placement-right * { scrollbar-width: none; }
+.op-app-header--end dialog.Overlay--placement-right .Overlay-body { overflow-x: hidden !important; }
