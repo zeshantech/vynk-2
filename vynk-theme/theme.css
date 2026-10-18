@@ -1273,3 +1273,12 @@ button:focus:not(:focus-visible), a:focus:not(:focus-visible),
   .vk-header-project::before { content: ""; width: 1px; height: 16px; margin: 0 6px 0 4px; background: var(--vk-border-strong); transform: none; }
   .vk-header-project .op-project-select--trigger-button { font-size: 15px !important; max-width: 46vw; }
 }
+@media (max-width: 899px) {
+  #content-wrapper {
+    margin: 0 8px 8px !important;
+    min-height: calc(100vh - 64px) !important;
+    border-radius: 14px !important;
+  }
+  #main.hidden-navigation #main-menu { box-shadow: none !important; visibility: hidden; transition: transform 0.22s ease, visibility 0s linear 0.22s; }
+  #main:not(.hidden-navigation) #main-menu { visibility: visible; transition: transform 0.22s ease; }
+}
