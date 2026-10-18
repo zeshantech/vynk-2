@@ -1,0 +1,250 @@
+/* Vynk modern theme for OpenProject — shadcn/ui-inspired (zinc neutrals + burgundy accent).
+   Appearance only. Loaded after OpenProject's own CSS. */
+
+@font-face {
+  font-family: "Inter";
+  src: url("/__vynk/fonts/Inter.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+:root,
+body,
+body.theme-core_design {
+  /* ---- tokens ---- */
+  --vk-bg: #ffffff;
+  --vk-bg-subtle: #fafafa;
+  --vk-muted: #f4f4f5;
+  --vk-border: #e4e4e7;
+  --vk-border-strong: #d4d4d8;
+  --vk-fg: #09090b;
+  --vk-fg-muted: #71717a;
+  --vk-fg-soft: #3f3f46;
+  --vk-primary: #6b1e2e;
+  --vk-primary-hover: #571826;
+  --vk-primary-soft: #f8eef0;
+  --vk-ring: rgba(107, 30, 46, 0.25);
+  --vk-radius: 8px;
+  --vk-shadow-sm: 0 1px 2px rgba(9, 9, 11, 0.05);
+  --vk-shadow-md: 0 4px 12px rgba(9, 9, 11, 0.08);
+
+  /* ---- OpenProject variable overrides ---- */
+  --body-font-family: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --fontStack-system: var(--body-font-family);
+  --fontStack-sansSerif: var(--body-font-family);
+  --fontStack-sansSerifDisplay: var(--body-font-family);
+  --body-background: var(--vk-bg);
+  --body-font-color: var(--vk-fg);
+
+  --borderRadius-small: 6px;
+  --borderRadius-medium: 8px;
+  --borderRadius-default: 8px;
+  --borderRadius-large: 12px;
+
+  --accent-color: var(--vk-primary);
+  --accent-color--major1: var(--vk-primary-hover);
+  --accent-color--major2: #43121d;
+  --accent-color--minor1: #a05563;
+  --accent-color--minor2: var(--vk-primary-soft);
+  --primary-button-color: var(--vk-primary);
+  --primary-button-color--major1: var(--vk-primary-hover);
+  --primary-button-color--minor1: #8a3a4a;
+  --primary-button-color--minor2: var(--vk-primary-soft);
+
+  --header-bg-color: var(--vk-bg);
+  --header-border-bottom-color: var(--vk-border);
+  --header-item-font-color: var(--vk-fg-soft);
+  --header-item-font-hover-color: var(--vk-fg);
+
+  --main-menu-bg-color: var(--vk-bg-subtle);
+  --main-menu-border-color: var(--vk-border);
+  --main-menu-font-color: var(--vk-fg-soft);
+  --main-menu-selected-font-color: var(--vk-fg);
+  --main-menu-bg-selected-background: var(--vk-muted);
+  --main-menu-hover-border-color: transparent;
+  --main-menu-bg-selected-border: transparent;
+  --breadcrumb-font-color: var(--vk-fg-muted);
+}
+
+html, body {
+  font-family: var(--body-font-family);
+  color: var(--vk-fg);
+  -webkit-font-smoothing: antialiased;
+  letter-spacing: -0.005em;
+}
+
+/* ---------- header ---------- */
+.op-app-header {
+  box-shadow: none;
+  border-bottom: 1px solid var(--vk-border);
+  background: var(--vk-bg);
+}
+
+/* ---------- headings ---------- */
+h1, h2, h3, .op-title, .PageHeader-title {
+  letter-spacing: -0.02em;
+  font-weight: 600;
+  color: var(--vk-fg);
+}
+
+/* ---------- links ---------- */
+a { color: var(--vk-primary); }
+a:hover { color: var(--vk-primary-hover); }
+
+/* ---------- inputs ---------- */
+input[type="text"], input[type="password"], input[type="email"], input[type="search"],
+input[type="number"], input[type="date"], input[type="url"], textarea, select,
+.form--text-field, .form--select, .TextInput, .FormControl-input {
+  border: 1px solid var(--vk-border) !important;
+  border-radius: var(--vk-radius) !important;
+  background: var(--vk-bg);
+  box-shadow: var(--vk-shadow-sm);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+input:focus, textarea:focus, select:focus,
+.form--text-field:focus, .TextInput:focus-within, .FormControl-input:focus {
+  outline: none !important;
+  border-color: var(--vk-primary) !important;
+  box-shadow: 0 0 0 3px var(--vk-ring) !important;
+}
+
+/* ---------- buttons ---------- */
+.button, .Button, .spot-button, input[type="submit"], button.button {
+  border-radius: var(--vk-radius);
+  font-weight: 500;
+  transition: background-color 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+.button.-primary, .button.-highlight, input[type="submit"].button,
+.Button--primary, .spot-button_primary, .spot-button.-primary {
+  background: var(--vk-primary);
+  border-color: var(--vk-primary);
+  color: #fff;
+  box-shadow: var(--vk-shadow-sm);
+}
+.button.-primary:hover, .button.-highlight:hover, input[type="submit"].button:hover,
+.Button--primary:hover, .spot-button_primary:hover {
+  background: var(--vk-primary-hover);
+  border-color: var(--vk-primary-hover);
+}
+.button:not(.-primary):not(.-highlight), .Button--secondary, .Button--default {
+  background: var(--vk-bg);
+  border: 1px solid var(--vk-border);
+  color: var(--vk-fg);
+  box-shadow: var(--vk-shadow-sm);
+}
+.button:not(.-primary):not(.-highlight):hover, .Button--secondary:hover {
+  background: var(--vk-muted);
+}
+
+/* ---------- cards / panels ---------- */
+.Box, .op-card, .widget-box, .grid--widget, .spot-card, .op-sidebar--box {
+  border: 1px solid var(--vk-border);
+  border-radius: 12px;
+  box-shadow: var(--vk-shadow-sm);
+  background: var(--vk-bg);
+}
+
+/* ---------- menus / popovers / dialogs ---------- */
+.dropdown-menu, .ActionList, .Overlay, .op-modal, .spot-modal, .ng-dropdown-panel, .SelectPanel {
+  border: 1px solid var(--vk-border) !important;
+  border-radius: 12px !important;
+  box-shadow: var(--vk-shadow-md) !important;
+}
+
+/* ---------- sidebar menu items ---------- */
+#main-menu a, .main-menu--children a, .op-submenu--item-action {
+  border-radius: 6px;
+}
+
+/* ---------- tables ---------- */
+table.generic-table th, .op-wp-table th, .generic-table--sort-header-outer {
+  font-weight: 500;
+  color: var(--vk-fg-muted);
+  background: var(--vk-bg-subtle);
+  border-bottom: 1px solid var(--vk-border);
+}
+table.generic-table td, .wp-table--cell-td {
+  border-color: var(--vk-border);
+}
+table.generic-table tbody tr:hover, .wp-table--row:hover .wp-table--cell-td {
+  background: var(--vk-muted);
+}
+
+/* ---------- tabs ---------- */
+.tabrow li a, .op-tab-row--link, .UnderlineNav-item {
+  font-weight: 500;
+}
+
+/* ---------- scrollbars ---------- */
+* { scrollbar-width: thin; scrollbar-color: var(--vk-border-strong) transparent; }
+
+/* ---------- brand logo ---------- */
+.op-logo, .op-logo--icon {
+  background-image: url("/__vynk/logo.svg") !important;
+  background-repeat: no-repeat !important;
+  background-position: left center !important;
+  background-size: contain !important;
+  width: 104px !important;
+}
+.op-logo svg, .op-logo--icon svg { display: none; }
+
+/* ---------- login page: centered card ---------- */
+body.controller-account.action-login { background: var(--vk-bg-subtle); }
+body.controller-account.action-login #content { max-width: none; padding: 0; }
+body.controller-account.action-login #content-body {
+  width: 100%; height: auto; min-height: 0;
+  display: flex; justify-content: center; padding: 8vh 16px 0;
+}
+body.controller-account.action-login #login-form {
+  width: 100%; max-width: 400px; box-sizing: border-box;
+  padding: 32px; background: var(--vk-bg);
+  border: 1px solid var(--vk-border); border-radius: 14px; box-shadow: var(--vk-shadow-md);
+}
+body.controller-account.action-login #login-form h1 { font-size: 22px; margin: 0 0 4px; }
+body.controller-account.action-login #login-form .form--separator { display: none; }
+body.controller-account.action-login #login-form form { margin-top: 20px; }
+body.controller-account.action-login #login-form input[type="text"],
+body.controller-account.action-login #login-form input[type="password"] {
+  width: 100%; box-sizing: border-box; height: 40px; padding: 0 12px;
+}
+body.controller-account.action-login #login-form label { font-weight: 500; font-size: 14px; color: var(--vk-fg-soft); }
+body.controller-account.action-login #login-form input[type="submit"] { width: 100%; height: 40px; margin-top: 8px; }
+body.controller-account.action-login #content-body { align-items: flex-start; }
+body.controller-account.action-login #login-form form .FormControl-spacingWrapper {
+  display: flex; flex-direction: column; gap: 14px;
+}
+body.controller-account.action-login #login-form .login-links,
+body.controller-account.action-login #login-form form a { font-size: 13px; }
+
+/* ---------- work package table polish ---------- */
+.generic-table--sort-header-outer, .generic-table--sort-header, .work-package-table--container th {
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  color: var(--vk-fg-muted) !important;
+}
+[class*="__hl_inline_type_"], [class*="__hl_inline_priority_"] {
+  display: inline-block;
+  text-transform: none !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  letter-spacing: 0 !important;
+  padding: 1px 8px;
+  border-radius: 9999px;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  line-height: 20px;
+}
+.wp-table--row:hover .wp-table--cell-td, .work-package-table--container tr:hover td {
+  background: var(--vk-bg-subtle) !important;
+}
+.wp-table--cell-td { border-bottom: 1px solid var(--vk-border) !important; }
+.wp-table--cell-td a { color: var(--vk-fg); text-decoration: none; }
+.wp-table--cell-td a:hover { color: var(--vk-primary); text-decoration: underline; }
+
+/* ---------- page header / toolbar ---------- */
+.toolbar-container .toolbar .toolbar-item .button, .op-toolbar .button { height: 32px; }
+.breadcrumb, .op-breadcrumb { font-size: 13px; }
+
+/* ---------- status pills (projects list etc.) ---------- */
+.op-status-pill, [class*="project-status"] { border-radius: 9999px; }
