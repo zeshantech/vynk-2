@@ -1402,3 +1402,30 @@ input:focus, textarea:focus, select:focus, .FormControl-input:focus, .ng-select-
   left: 12px !important; width: 16px !important; padding: 0 !important; color: #71717a !important;
 }
 .top-menu-search .ng-value-container { padding-left: 36px !important; }
+
+/* =====================================================================
+   30. Sidebar overflow + details panel polish
+   ===================================================================== */
+/* inline submenu fits inside the sidebar (indent without overflowing) */
+#main-menu li.open > ul.main-menu--children { width: auto !important; max-width: calc(100% - 18px) !important; box-sizing: border-box !important; }
+#main-menu li.open > ul.main-menu--children * { max-width: 100%; box-sizing: border-box; }
+#main-menu .op-submenu--item-action, #main-menu .op-submenu--title { width: 100% !important; }
+
+/* sidebar uses the full height and scrolls when long */
+@media (min-width: 900px) {
+  #main-menu #menu-sidebar { height: 100vh !important; max-height: 100vh !important; overflow-y: auto !important; padding-bottom: 24px; }
+}
+
+/* focus outline colour neutral everywhere; tabs never show a box */
+body[data-color-mode][data-light-theme] { --focus-outlineColor: rgba(10, 10, 11, 0.35) !important; }
+.op-tab-row--link, .op-tab-row--link:focus, .op-tab-row--link:focus-visible {
+  outline: none !important; box-shadow: none !important; border-top: 0 !important; border-left: 0 !important; border-right: 0 !important;
+}
+
+/* details panel */
+.work-packages--details-toolbar-container, .work-packages--details-toolbar {
+  background: var(--vk-bg) !important;
+  border-top: 1px solid var(--vk-border) !important;
+}
+.work-packages--details-toolbar .button, .work-packages--details-toolbar .Button { border-radius: 8px !important; }
+.work-packages-partitioned-page--content-right, .work-packages--details { border-left: 1px solid var(--vk-border) !important; }
