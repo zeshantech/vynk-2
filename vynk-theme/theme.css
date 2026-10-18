@@ -1347,3 +1347,10 @@ input:focus, textarea:focus, select:focus, .FormControl-input:focus,
 .TreeViewItem[aria-current="true"] > .TreeViewItemContent,
 .TreeViewItemContent[aria-current="true"] { background: #ececef !important; color: var(--vk-fg) !important; font-weight: 600 !important; }
 .TreeViewItemContent::after { display: none !important; }
+
+/* Gantt: rounded bars, upright muted labels */
+.timeline-element.bar { border-radius: 6px !important; box-shadow: inset 0 0 0 1px rgba(10, 10, 11, 0.06); }
+.labelFarRight, .labelLeft, .labelRight, .labelFarRight .label-content, .labelLeft .label-content, .labelRight .label-content {
+  font-style: normal !important; font-size: 12px !important; color: var(--vk-fg-muted) !important;
+}
+.labelFarRight .label-content { color: var(--vk-fg-soft) !important; font-weight: 500; }
