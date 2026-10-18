@@ -887,3 +887,5 @@ i.icon-mail::before { --vk-icon: url("/__vynk/icons/mail.svg"); }
 i.icon-action-menu::before { color: #8e8e93; }
 .dropdown-menu li:hover i.icon-action-menu::before { color: #1d1d1f; }
 i.icon-show-more::before, i.icon-pulldown::before { width: 1.05em; height: 1.05em; }
+i.icon-hierarchy::before { margin-right: 8px; width: 1em; height: 1em; }
+.generic-table--sort-header-outer i.icon-hierarchy { margin-right: 6px; }
