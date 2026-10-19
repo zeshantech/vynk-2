@@ -9,8 +9,9 @@ end
 [SystemUser, AnonymousUser, DeletedUser].each do |klass|
   rec = klass.first
   next unless rec
-  rec.update_columns(status: User.statuses[:locked], hashed_password: "")
-  puts "locked built-in #{klass.name} id=#{rec.id}"
+  rec.update_columns(status: User.statuses[:locked])
+  rec.passwords.destroy_all if rec.respond_to?(:passwords)
+  puts "locked built-in #{klass.name} id=#{rec.id} status=#{rec.reload.status}"
 rescue => e
   puts "built-in #{klass.name}: #{e.class} #{e.message}"
 end
