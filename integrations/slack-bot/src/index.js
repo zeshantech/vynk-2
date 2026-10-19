@@ -929,7 +929,7 @@ async function teamHours({ cmd, client, text }) {
   const weeksBack = /^last/i.test(text) ? 1 : 0;
   const week = currentWeek(TZ, weeksBack);
   const [entries, users] = await Promise.all([admin.api.timeEntries({ from: week.from, to: week.to }), admin.api.activeUsers()]);
-  return teamView({ label: weeksBack ? "Last week" : "This week", week, users, entries });
+  return teamView({ label: weeksBack ? "Last week" : "This week", week, users, entries, urls });
 }
 
 command("/team-hours", teamHours);

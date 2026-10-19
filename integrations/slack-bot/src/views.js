@@ -301,7 +301,7 @@ export function tasksView({ tasks, urls }) {
 }
 
 /** Hours per person, broken down by project. */
-export function teamView({ label, week, users, entries }) {
+export function teamView({ label, week, users, entries, urls }) {
   const total = sum(entries);
   const before = [header(`Team  ·  ${label}  ·  ${formatHours(total)}`), context(prettyRange(week.from, week.to))];
   const byUser = groupBy(entries, (e) => e.userId);
@@ -314,22 +314,42 @@ export function teamView({ label, week, users, entries }) {
     )
     .sort((a, b) => sum(b.list) - sum(a.list));
 
-  const rows = [[bold("Person"), bold("Project"), bold("Hours")]];
+  const rows = [[bold("Person"), bold("Project"), bold("Task"), bold("Hours")]];
+  let truncated = false;
   for (const person of people) {
     const projects = [...groupBy(person.list, (e) => e.projectTitle ?? "Other").entries()].sort((a, b) => sum(b[1]) - sum(a[1]));
     if (!projects.length) {
-      rows.push([person.name, "–", "–"]);
+      rows.push([person.name, "–", "–", "–"]);
       continue;
     }
-    projects.forEach(([project, list], index) => rows.push([index === 0 ? bold(person.name) : "", project, formatHours(sum(list))]));
-    if (projects.length > 1) rows.push(["", bold("Total"), bold(formatHours(sum(person.list)))]);
+    let first = true;
+    for (const [project, list] of projects) {
+      const tasks = [...groupBy(list, (e) => e.workPackageId ?? 0).values()].sort((a, b) => sum(b) - sum(a));
+      tasks.forEach((t, index) => {
+        rows.push([
+          first ? bold(person.name) : "",
+          index === 0 ? project : "",
+          link(t[0].workPackageTitle ?? "Other", t[0].workPackageId ? urls?.wp(t[0].workPackageId) : null),
+          formatHours(sum(t)),
+        ]);
+        first = false;
+      });
+    }
+    rows.push(["", "", bold(`${person.name.split(" ")[0]} total`), bold(formatHours(sum(person.list)))]);
+  }
+  if (rows.length > 100) {
+    rows.length = 99;
+    truncated = true;
   }
 
   const suspicious = people.filter((p) => [...groupBy(p.list, (e) => e.spentOn).values()].some((day) => sum(day) > 24)).map((p) => p.name);
-  const after = suspicious.length
-    ? [context(`:warning:  Over 24h in a single day: ${suspicious.map(escape).join(", ")}. Please check those entries in Vynk.`)]
-    : [];
-  return withTable(`Team hours: ${formatHours(total)}`, before, rows.slice(0, 100), [null, null, "right"], after);
+  const after = [
+    ...(suspicious.length
+      ? [context(`:warning:  Over 24h in a single day: ${suspicious.map(escape).join(", ")}. Please check those entries in Vynk.`)]
+      : []),
+    ...(truncated ? [context("Showing the first 98 rows. Open Vynk for the full report.")] : []),
+  ];
+  return withTable(`Team hours: ${formatHours(total)}`, before, rows, [null, null, null, "right"], after);
 }
 
 export function menuView(options, adminOptions = [], signedInAs = null) {
