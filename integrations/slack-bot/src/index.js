@@ -176,11 +176,17 @@ async function openForm(client, triggerId, title, build) {
     view: { ...shell, blocks: [{ type: "section", text: { type: "mrkdwn", text: ":hourglass_flowing_sand: Loading…" } }] },
   });
   try {
-    const { callbackId, submit, blocks } = await build();
+    const { callbackId, submit, blocks, privateMetadata } = await build();
     await client.views.update({
       view_id: view.id,
       hash: view.hash,
-      view: { ...shell, callback_id: callbackId, submit: { type: "plain_text", text: submit }, blocks },
+      view: {
+        ...shell,
+        callback_id: callbackId,
+        submit: { type: "plain_text", text: submit },
+        ...(privateMetadata ? { private_metadata: privateMetadata } : {}),
+        blocks,
+      },
     });
   } catch (err) {
     if (!(err instanceof UserFacingError)) app.logger.error(`${title} form failed`, err);
@@ -269,12 +275,12 @@ app.view("create_task", async ({ ack, body, view, client, logger }) => {
 
 // ---------- time ----------
 
-async function logTimeFor(user, { hours, workPackageId, spentOn, comment }) {
+async function logTimeFor(user, { hours, workPackageId, spentOn, comment, activityId }) {
   const wp = await op.workPackage(workPackageId).catch((err) => {
     if (err.status === 404) throw new UserFacingError(`Task #${workPackageId} not found.`);
     throw err;
   });
-  await op.logTime({ userId: user.id, workPackageId, hours, spentOn, comment }).catch((err) => {
+  await op.logTime({ userId: user.id, workPackageId, hours, spentOn, comment, activityId }).catch((err) => {
     if (err.status === 403)
       throw new UserFacingError(
         `You can't log time on #${workPackageId}: you're not a member of its project (or time tracking is off there).`,
@@ -285,51 +291,157 @@ async function logTimeFor(user, { hours, workPackageId, spentOn, comment }) {
   const entries = await op.timeEntries({ from: week.from, to: week.to, userId: user.id });
   const total = entries.reduce((sum, e) => sum + e.hours, 0);
   const weekLabel = week.from === currentWeek(TZ).from ? "This week" : `Week of ${week.from}`;
-  return `:stopwatch: Logged *${formatHours(hours)}* on <${wpUrl(wp.id)}|#${wp.id} ${escape(wp.subject)}> for ${spentOn}. ${weekLabel}: *${formatHours(total)}*.`;
+  return `:stopwatch: Logged *${formatHours(hours)}* on <${wpUrl(wp.id)}|${escape(wp.subject)}> for ${spentOn}. ${weekLabel}: *${formatHours(total)}*.`;
+}
+
+const cache = new Map();
+async function cached(key, ttlMs, load) {
+  const hit = cache.get(key);
+  if (hit && hit.expires > Date.now()) return hit.value;
+  const value = await load();
+  cache.set(key, { value, expires: Date.now() + ttlMs });
+  return value;
+}
+
+const option = (text, value) => ({ text: { type: "plain_text", text: String(text).slice(0, 75) }, value: String(value) });
+const plain = (text) => ({ type: "plain_text", text });
+
+async function logTimeData(user, projectId) {
+  const projects = await cached(`projects:${user.id}`, 60_000, () => op.projectsFor(user));
+  if (!projects.length) throw new UserFacingError("You're not a member of any project yet. Ask an admin to add you.");
+  const id = projectId ?? (projects.length === 1 ? projects[0].id : null);
+  const [tasks, activities] = id
+    ? await Promise.all([
+        cached(`tasks:${id}`, 30_000, () => op.projectTasks(id)),
+        cached(`activities:${id}`, 300_000, () => op.activities(id)),
+      ])
+    : [[], []];
+  return { projects, projectId: id, tasks, activities };
+}
+
+function logTimeView({ projects, projectId, tasks, activities }, meta, prefill = {}) {
+  const mode = meta.mode === "existing" && tasks.length ? "existing" : "new";
+  const project = projects.find((p) => p.id === projectId);
+  const projectOptions = projects.slice(0, 100).map((p) => option(p.name, p.id));
+  const blocks = [
+    {
+      type: "input",
+      block_id: "project",
+      dispatch_action: true,
+      label: plain("Project"),
+      element: {
+        type: "static_select",
+        action_id: "lt_project",
+        placeholder: plain("Choose a project"),
+        options: projectOptions,
+        ...(project ? { initial_option: option(project.name, project.id) } : {}),
+      },
+    },
+  ];
+
+  if (projectId) {
+    if (mode === "new") {
+      blocks.push(input("task_title", "Task", { type: "plain_text_input", placeholder: plain("What are you working on?") }));
+    } else {
+      blocks.push(
+        input("task_pick", "Task", {
+          type: "static_select",
+          placeholder: plain("Choose a task"),
+          options: tasks.map((t) => option(t.subject, t.id)),
+        }),
+      );
+    }
+    if (tasks.length) {
+      blocks.push({
+        type: "actions",
+        block_id: "task_mode",
+        elements: [
+          {
+            type: "button",
+            action_id: "lt_mode",
+            text: plain(mode === "new" ? "Pick an existing task" : "Create a new task instead"),
+            value: mode === "new" ? "existing" : "new",
+          },
+        ],
+      });
+    }
+    blocks.push(
+      input("subtask", "Subtask", { type: "plain_text_input", placeholder: plain("Optional: a smaller step under this task") }, true),
+    );
+    if (activities.length) {
+      blocks.push(
+        input("activity", "Activity", {
+          type: "static_select",
+          placeholder: plain("What kind of work?"),
+          options: activities.map((a) => option(a.name, a.id)),
+        }),
+      );
+    }
+  } else {
+    blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: "Choose a project to see its tasks." }] });
+  }
+
+  blocks.push(
+    { type: "divider" },
+    input("hours", "Time spent", {
+      type: "plain_text_input",
+      placeholder: plain("e.g. 2h, 1h30m or 1.5"),
+      ...(prefill.hours ? { initial_value: String(prefill.hours) } : {}),
+    }),
+    input("date", "Date", { type: "datepicker", initial_date: todayIn(TZ) }),
+    input(
+      "comment",
+      "Notes",
+      {
+        type: "plain_text_input",
+        multiline: true,
+        placeholder: plain("What did you do?"),
+        ...(prefill.comment ? { initial_value: prefill.comment } : {}),
+      },
+      true,
+    ),
+  );
+
+  return {
+    type: "modal",
+    callback_id: "log_time",
+    private_metadata: JSON.stringify({ projectId, mode }),
+    title: plain("Log time"),
+    submit: plain("Log time"),
+    close: plain("Cancel"),
+    blocks,
+  };
 }
 
 function openLogTimeModal(client, triggerId, slackUserId, prefill = {}) {
   return openForm(client, triggerId, "Log time", async () => {
     const user = await vynkUser(client, slackUserId);
-    const [tasks, projects] = await Promise.all([op.taskPicker(user.id), projectOptions()]);
-    const taskOptions = tasks.map((wp) => ({
-      text: { type: "plain_text", text: `#${wp.id} ${wp.subject}`.slice(0, 75) },
-      value: String(wp.id),
-    }));
-    const blocks = [];
-    if (taskOptions.length) {
-      blocks.push(input("task", "Task", { type: "static_select", options: taskOptions }, true));
-    }
-    blocks.push(
-      input(
-        "task_id",
-        taskOptions.length ? "…or task ID" : "Task ID",
-        {
-          type: "plain_text_input",
-          placeholder: { type: "plain_text", text: "123" },
-          ...(prefill.workPackageId ? { initial_value: String(prefill.workPackageId) } : {}),
-        },
-        true,
-      ),
-      ...(projects.length
-        ? [
-            { type: "context", elements: [{ type: "mrkdwn", text: "*Or create a new task* and log the time on it" }] },
-            input("new_task", "New task title", { type: "plain_text_input" }, true),
-            input("new_project", "Project for the new task", { type: "static_select", options: projects }, true),
-            { type: "divider" },
-          ]
-        : []),
-      input("hours", "Time spent", {
-        type: "plain_text_input",
-        placeholder: { type: "plain_text", text: "1.5 or 1h30m" },
-        ...(prefill.hours ? { initial_value: String(prefill.hours) } : {}),
-      }),
-      input("date", "Date", { type: "datepicker", initial_date: todayIn(TZ) }),
-      input("comment", "Comment", { type: "plain_text_input", ...(prefill.comment ? { initial_value: prefill.comment } : {}) }, true),
-    );
-    return { callbackId: "log_time", submit: "Log", blocks };
+    const view = logTimeView(await logTimeData(user), { mode: "new" }, prefill);
+    return { callbackId: view.callback_id, submit: view.submit.text, blocks: view.blocks, privateMetadata: view.private_metadata };
   });
 }
+
+async function refreshLogTimeView({ body, client, logger }, changes) {
+  try {
+    const meta = { ...JSON.parse(body.view.private_metadata || "{}"), ...changes };
+    const user = await vynkUser(client, body.user.id);
+    const data = await logTimeData(user, meta.projectId);
+    await client.views.update({ view_id: body.view.id, hash: body.view.hash, view: logTimeView(data, meta) });
+  } catch (err) {
+    if (err?.data?.error === "hash_conflict") return;
+    logger.error("log time refresh failed", err);
+  }
+}
+
+app.action("lt_project", async ({ ack, body, action, client, logger }) => {
+  await ack();
+  await refreshLogTimeView({ body, client, logger }, { projectId: Number(action.selected_option.value), mode: "new" });
+});
+
+app.action("lt_mode", async ({ ack, body, action, client, logger }) => {
+  await ack();
+  await refreshLogTimeView({ body, client, logger }, { mode: action.value });
+});
 
 app.command("/log-time", async ({ ack, command: cmd, client, respond, logger }) => {
   await ack();
@@ -352,17 +464,17 @@ app.command("/log-time", async ({ ack, command: cmd, client, respond, logger }) 
 
 app.view("log_time", async ({ ack, body, view, client, logger }) => {
   const values = view.state.values;
-  const hours = parseHours(values.hours.value.value);
-  const typedId = values.task_id.value.value?.trim().replace("#", "");
-  const workPackageId = Number(typedId || values.task?.value.selected_option?.value);
-  const newTask = values.new_task?.value.value?.trim();
-  const newProjectId = Number(values.new_project?.value.selected_option?.value);
+  const meta = JSON.parse(view.private_metadata || "{}");
+  const hours = parseHours(values.hours?.value.value);
+  const taskTitle = values.task_title?.value.value?.trim();
+  const pickedId = Number(values.task_pick?.value.selected_option?.value);
+  const subtask = values.subtask?.value.value?.trim();
+  const activityId = Number(values.activity?.value.selected_option?.value) || null;
   const errors = {};
-  if (!hours) errors.hours = "Use a number like 1.5 or 1h30m";
-  if (workPackageId && newTask) errors.new_task = "Pick an existing task or create a new one, not both";
-  else if (newTask && !newProjectId) errors.new_project = "Choose a project for the new task";
-  else if (!workPackageId && !newTask) errors[values.task ? "task" : "task_id"] = "Pick a task, type its ID, or create a new one below";
-  else if (typedId && !/^\d+$/.test(typedId)) errors.task_id = "Task ID must be a number";
+  if (!meta.projectId) errors.project = "Choose a project";
+  else if (meta.mode === "existing" && !pickedId) errors.task_pick = "Choose a task";
+  else if (meta.mode !== "existing" && !taskTitle) errors.task_title = "Name the task";
+  if (!hours) errors.hours = "Use something like 2h, 1h30m or 1.5";
   if (Object.keys(errors).length) {
     await ack({ response_action: "errors", errors });
     return;
@@ -371,22 +483,27 @@ app.view("log_time", async ({ ack, body, view, client, logger }) => {
   const dm = (text) => client.chat.postMessage({ channel: body.user.id, text });
   try {
     const user = await vynkUser(client, body.user.id);
-    let created = "";
-    let targetId = workPackageId;
-    if (newTask) {
-      const wp = await op.createTask({ projectId: newProjectId, subject: newTask, assigneeId: user.id });
+    const notes = [];
+    let targetId = pickedId;
+    if (!targetId) {
+      const wp = await op.createTask({ projectId: meta.projectId, subject: taskTitle, assigneeId: user.id });
       targetId = wp.id;
-      created = `:white_check_mark: Created <${wpUrl(wp.id)}|#${wp.id} ${escape(wp.subject)}>.\n`;
+      notes.push(`:white_check_mark: New task <${wpUrl(wp.id)}|${escape(wp.subject)}>`);
     }
-    const text =
-      created +
-      (await logTimeFor(user, {
-        hours,
-        workPackageId: targetId,
-        spentOn: values.date.value.selected_date,
-        comment: values.comment.value.value ?? "",
-      }));
-    await dm(text);
+    if (subtask) {
+      const sub = await op.createTask({ projectId: meta.projectId, subject: subtask, assigneeId: user.id, parentId: targetId });
+      targetId = sub.id;
+      notes.push(`:white_check_mark: New subtask <${wpUrl(sub.id)}|${escape(sub.subject)}>`);
+    }
+    cache.delete(`tasks:${meta.projectId}`);
+    const logged = await logTimeFor(user, {
+      hours,
+      workPackageId: targetId,
+      activityId,
+      spentOn: values.date.value.selected_date,
+      comment: values.comment?.value.value ?? "",
+    });
+    await dm([...notes, logged].join("\n"));
   } catch (err) {
     if (!(err instanceof UserFacingError)) logger.error("log_time submit failed", err);
     await dm(errorText(err));

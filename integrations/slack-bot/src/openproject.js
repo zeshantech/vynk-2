@@ -77,8 +77,22 @@ export class OpenProject {
     return data?._embedded?.elements ?? [];
   }
 
+  async projectsFor(user) {
+    if (user.admin) return this.projects();
+    const data = await this.request(
+      "GET",
+      `/api/v3/projects?pageSize=200&sortBy=${encodeURIComponent('[["name","asc"]]')}&filters=${filters([
+        { active: { operator: "=", values: ["t"] } },
+        { principal: { operator: "=", values: [String(user.id)] } },
+      ])}`,
+    );
+    return data?._embedded?.elements ?? [];
+  }
+
   async findProject(nameOrIdentifier) {
-    const needle = String(nameOrIdentifier ?? "").trim().toLowerCase();
+    const needle = String(nameOrIdentifier ?? "")
+      .trim()
+      .toLowerCase();
     if (!needle) return null;
     const all = await this.projects();
     return (
@@ -119,10 +133,11 @@ export class OpenProject {
     return types.find((t) => t.name.toLowerCase() === "task") ?? types[0] ?? null;
   }
 
-  async createTask({ projectId, subject, assigneeId, description }) {
+  async createTask({ projectId, subject, assigneeId, description, parentId }) {
     const type = await this.taskType(projectId);
     const links = {};
     if (type) links.type = { href: type._links.self.href };
+    if (parentId) links.parent = { href: `/api/v3/work_packages/${parentId}` };
     const create = (withAssignee) =>
       this.request("POST", `/api/v3/projects/${projectId}/work_packages`, {
         subject,
@@ -158,16 +173,32 @@ export class OpenProject {
   async taskPicker(userId, limit = 100) {
     const data = await this.request(
       "GET",
-      `/api/v3/work_packages?pageSize=${limit}&select=total,elements/id,elements/subject&sortBy=${encodeURIComponent('[["updatedAt","desc"]]')}&filters=${filters([
-        { assignee: { operator: "=", values: [String(userId)] } },
-        { status: { operator: "o", values: [] } },
-      ])}`,
+      `/api/v3/work_packages?pageSize=${limit}&select=total,elements/id,elements/subject&sortBy=${encodeURIComponent('[["updatedAt","desc"]]')}&filters=${filters(
+        [{ assignee: { operator: "=", values: [String(userId)] } }, { status: { operator: "o", values: [] } }],
+      )}`,
     );
     return data?._embedded?.elements ?? [];
   }
 
+  async projectTasks(projectId, limit = 100) {
+    const data = await this.request(
+      "GET",
+      `/api/v3/projects/${projectId}/work_packages?pageSize=${limit}&select=total,elements/id,elements/subject&sortBy=${encodeURIComponent(
+        '[["updatedAt","desc"]]',
+      )}&filters=${filters([{ status: { operator: "o", values: [] } }])}`,
+    );
+    return data?._embedded?.elements ?? [];
+  }
+
+  async activities(projectId) {
+    const form = await this.request("POST", "/api/v3/time_entries/form", {
+      _links: { project: { href: `/api/v3/projects/${projectId}` } },
+    });
+    return (form?._embedded?.schema?.activity?._embedded?.allowedValues ?? []).map((a) => ({ id: a.id, name: a.name }));
+  }
+
   // ---------- time ----------
-  async logTime({ userId, workPackageId, hours, spentOn, comment }) {
+  async logTime({ userId, workPackageId, hours, spentOn, comment, activityId }) {
     const body = {
       hours: toIsoDuration(hours),
       spentOn,
@@ -175,6 +206,7 @@ export class OpenProject {
       _links: {
         user: { href: `/api/v3/users/${userId}` },
         workPackage: { href: `/api/v3/work_packages/${workPackageId}` },
+        ...(activityId ? { activity: { href: `/api/v3/time_entries/activities/${activityId}` } } : {}),
       },
     };
     try {
