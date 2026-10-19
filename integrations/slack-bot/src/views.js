@@ -219,14 +219,14 @@ export function projectsView({ projects, mine, team, members = [], details = new
   const listed = projects.slice(0, 100);
   const manage =
     listed.length <= 5
-      ? { type: "actions", elements: listed.map((p) => button(`Members · ${p.name}`.slice(0, 75), `pm_manage_${p.id}`, String(p.id))) }
+      ? { type: "actions", elements: listed.map((p) => button(`Edit · ${p.name}`.slice(0, 75), `pm_manage_${p.id}`, String(p.id))) }
       : {
           type: "actions",
           elements: [
             {
               type: "static_select",
               action_id: "pm_manage_select",
-              placeholder: plain("Manage members of…"),
+              placeholder: plain("Edit project…"),
               options: listed.map((p) => ({ text: plain(p.name.slice(0, 75)), value: String(p.id) })),
             },
           ],
@@ -267,7 +267,7 @@ export function projectCreatedView({ project, result, urls, inChannel = false, b
       ...peopleSummary(result),
       {
         type: "actions",
-        elements: [button(result ? "Manage project" : "Add people", `pm_manage_${project.id}`, String(project.id), "primary")],
+        elements: [button("Edit project", `pm_manage_${project.id}`, String(project.id), "primary")],
       },
     ],
   };
