@@ -1,0 +1,196 @@
+// Minimal OpenProject API v3 client used by the bot (service account API key).
+
+import { fromIsoDuration, toIsoDuration } from "./time.js";
+
+export class OpenProjectError extends Error {
+  constructor(message, status, data) {
+    super(message);
+    this.status = status;
+    this.data = data;
+  }
+}
+
+const filters = (list) => encodeURIComponent(JSON.stringify(list));
+const idFromHref = (href) => (href ? Number(String(href).split("/").pop()) : null);
+
+export class OpenProject {
+  constructor({ baseUrl, apiKey }) {
+    this.baseUrl = baseUrl.replace(/\/$/, "");
+    this.auth = `Basic ${Buffer.from(`apikey:${apiKey}`).toString("base64")}`;
+    this.userCache = new Map();
+  }
+
+  async request(method, path, body) {
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      method,
+      headers: { Authorization: this.auth, Accept: "application/hal+json", "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const text = await res.text();
+    let data = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      data = { message: text.slice(0, 300) };
+    }
+    if (!res.ok) {
+      const detail = data?._embedded?.errors?.map((e) => e.message).join("; ");
+      throw new OpenProjectError(detail || data?.message || `${res.status} ${res.statusText}`, res.status, data);
+    }
+    return data;
+  }
+
+  url(path) {
+    return `${this.baseUrl}${path}`;
+  }
+
+  // ---------- users ----------
+  async userByEmail(email) {
+    const key = email.toLowerCase();
+    const cached = this.userCache.get(key);
+    if (cached && cached.expires > Date.now()) return cached.user;
+    const data = await this.request(
+      "GET",
+      `/api/v3/users?pageSize=50&filters=${filters([{ any_name_attribute: { operator: "~", values: [email] } }])}`,
+    );
+    const user = (data?._embedded?.elements ?? []).find((u) => (u.email ?? "").toLowerCase() === key) ?? null;
+    this.userCache.set(key, { user, expires: Date.now() + 10 * 60 * 1000 });
+    return user;
+  }
+
+  async activeUsers() {
+    const data = await this.request(
+      "GET",
+      `/api/v3/users?pageSize=500&filters=${filters([{ status: { operator: "=", values: ["active"] } }])}`,
+    );
+    return data?._embedded?.elements ?? [];
+  }
+
+  // ---------- projects ----------
+  async projects() {
+    const data = await this.request(
+      "GET",
+      `/api/v3/projects?pageSize=200&sortBy=${encodeURIComponent('[["name","asc"]]')}&filters=${filters([
+        { active: { operator: "=", values: ["t"] } },
+      ])}`,
+    );
+    return data?._embedded?.elements ?? [];
+  }
+
+  async findProject(nameOrIdentifier) {
+    const needle = String(nameOrIdentifier ?? "").trim().toLowerCase();
+    if (!needle) return null;
+    const all = await this.projects();
+    return (
+      all.find((p) => p.identifier.toLowerCase() === needle || p.name.toLowerCase() === needle) ??
+      all.find((p) => p.name.toLowerCase().includes(needle)) ??
+      null
+    );
+  }
+
+  async createProject(name) {
+    const identifier = name
+      .toLowerCase()
+      .normalize("NFKD")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 90);
+    return this.request("POST", "/api/v3/projects", { name, identifier: identifier || undefined, public: false });
+  }
+
+  async addMember({ projectId, userId, roleName = "Project admin" }) {
+    const data = await this.request("GET", "/api/v3/roles");
+    const roles = (data?._embedded?.elements ?? []).filter((r) => !/non member|anonymous/i.test(r.name));
+    const role = roles.find((r) => r.name.toLowerCase() === roleName.toLowerCase()) ?? roles.find((r) => /admin/i.test(r.name)) ?? roles[0];
+    if (!role) return null;
+    return this.request("POST", "/api/v3/memberships", {
+      _links: {
+        principal: { href: `/api/v3/users/${userId}` },
+        project: { href: `/api/v3/projects/${projectId}` },
+        roles: [{ href: role._links.self.href }],
+      },
+    });
+  }
+
+  // ---------- work packages ----------
+  async taskType(projectId) {
+    const data = await this.request("GET", `/api/v3/projects/${projectId}/types`);
+    const types = data?._embedded?.elements ?? [];
+    return types.find((t) => t.name.toLowerCase() === "task") ?? types[0] ?? null;
+  }
+
+  async createTask({ projectId, subject, assigneeId, description }) {
+    const type = await this.taskType(projectId);
+    const links = {};
+    if (type) links.type = { href: type._links.self.href };
+    const create = (withAssignee) =>
+      this.request("POST", `/api/v3/projects/${projectId}/work_packages`, {
+        subject,
+        ...(description ? { description: { raw: description } } : {}),
+        _links: withAssignee && assigneeId ? { ...links, assignee: { href: `/api/v3/users/${assigneeId}` } } : links,
+      });
+    try {
+      return await create(true);
+    } catch (err) {
+      // Assignee must be a project member; still create the task, just unassigned.
+      if (!assigneeId || err.data?._embedded?.details?.attribute !== "assignee") throw err;
+      const wp = await create(false);
+      wp.assigneeSkipped = true;
+      return wp;
+    }
+  }
+
+  async workPackage(id) {
+    return this.request("GET", `/api/v3/work_packages/${id}`);
+  }
+
+  async openTasksFor(userId, limit = 15) {
+    const data = await this.request(
+      "GET",
+      `/api/v3/work_packages?pageSize=${limit}&sortBy=${encodeURIComponent('[["updatedAt","desc"]]')}&filters=${filters([
+        { assignee: { operator: "=", values: [String(userId)] } },
+        { status: { operator: "o", values: [] } },
+      ])}`,
+    );
+    return data?._embedded?.elements ?? [];
+  }
+
+  // ---------- time ----------
+  async logTime({ userId, workPackageId, hours, spentOn, comment }) {
+    const body = {
+      hours: toIsoDuration(hours),
+      spentOn,
+      comment: { raw: comment ?? "" },
+      _links: {
+        user: { href: `/api/v3/users/${userId}` },
+        workPackage: { href: `/api/v3/work_packages/${workPackageId}` },
+      },
+    };
+    try {
+      return await this.request("POST", "/api/v3/time_entries", body);
+    } catch (err) {
+      // Some setups require an activity: pick the first allowed one from the form and retry.
+      if (err.status !== 422 || !/activity/i.test(err.message)) throw err;
+      const form = await this.request("POST", "/api/v3/time_entries/form", body);
+      const activity = form?._embedded?.schema?.activity?._embedded?.allowedValues?.[0];
+      if (!activity) throw err;
+      body._links.activity = { href: activity._links.self.href };
+      return this.request("POST", "/api/v3/time_entries", body);
+    }
+  }
+
+  async timeEntries({ from, to, userId }) {
+    const list = [{ spent_on: { operator: "<>d", values: [from, to] } }];
+    if (userId) list.push({ user: { operator: "=", values: [String(userId)] } });
+    const data = await this.request("GET", `/api/v3/time_entries?pageSize=1000&filters=${filters(list)}`);
+    return (data?._embedded?.elements ?? []).map((e) => ({
+      hours: fromIsoDuration(e.hours),
+      spentOn: e.spentOn,
+      userId: idFromHref(e._links?.user?.href),
+      userName: e._links?.user?.title,
+      workPackageId: idFromHref(e._links?.workPackage?.href ?? e._links?.entity?.href),
+      workPackageTitle: e._links?.workPackage?.title ?? e._links?.entity?.title,
+      comment: e.comment?.raw ?? "",
+    }));
+  }
+}

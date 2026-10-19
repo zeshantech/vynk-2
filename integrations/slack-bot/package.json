@@ -1,0 +1,16 @@
+{
+  "name": "vynk-slack-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Slack bot for Vynk (OpenProject): create projects and tasks, log time, weekly hours and reminders.",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": { "node": ">=22" },
+  "dependencies": {
+    "@slack/bolt": "^4.4.0"
+  }
+}

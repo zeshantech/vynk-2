@@ -21,6 +21,24 @@ services:
       shared_net:
         aliases: [vynk-op]
 
+  # Slack bot: started only when SLACK_BOT_TOKEN is in .env (deploy sets COMPOSE_PROFILES=slack).
+  slack-bot:
+    profiles: [slack]
+    build: ./slack-bot
+    image: vynk-slack-bot:local
+    pull_policy: build
+    restart: unless-stopped
+    depends_on: [openproject]
+    environment:
+      OPENPROJECT_URL: ${OPENPROJECT_URL:-https://${OPENPROJECT_HOST__NAME}}
+      OPENPROJECT_API_KEY: ${OPENPROJECT_API_KEY:-}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:-}
+      BOT_TIMEZONE: ${BOT_TIMEZONE:-Asia/Karachi}
+      REMINDER_DAY: ${REMINDER_DAY:-}
+      REMINDER_TIME: ${REMINDER_TIME:-17:00}
+      REMINDER_MIN_HOURS: ${REMINDER_MIN_HOURS:-40}
+
 networks:
   shared_net:
     external: true
