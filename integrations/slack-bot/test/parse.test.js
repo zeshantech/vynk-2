@@ -29,6 +29,8 @@ test("hoursError", () => {
   assert.match(hoursError("24h1m"), /Maximum is 24h/);
   assert.match(hoursError("25"), /Maximum is 24h/);
   assert.match(hoursError("1500m"), /Maximum is 24h/);
+  assert.match(hoursError("2222h"), /Maximum is 24h/);
+  assert.match(hoursError("2222"), /Maximum is 24h/);
   assert.match(hoursError("abc"), /Use a duration/);
   assert.match(hoursError("0"), /Use a duration/);
 });

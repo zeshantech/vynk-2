@@ -151,21 +151,43 @@ export function weekView({ label, week, entries, urls, otherWeekLabel, otherWeek
   );
 }
 
-export function loggedView({ hours, wp, projectName, activityName, spentOn, weekLabel, weekTotal, created, urls }) {
-  const extra = created.length ? `${created.join("  ·  ")}  ·  ` : "";
-  return {
-    text: `Logged ${formatHours(hours)} on ${wp.subject}`,
-    blocks: [
-      { type: "section", text: md(`:white_check_mark:  *${formatHours(hours)} logged*`) },
-      fields(
-        `*Task*\n<${urls.wp(wp.id)}|${escape(wp.subject)}>`,
-        `*Project*\n${escape(projectName ?? "–")}`,
-        `*Date*\n${prettyDate(spentOn)}`,
-        ...(activityName ? [`*Activity*\n${escape(activityName)}`] : []),
-      ),
-      context(`${extra}${weekLabel}: *${formatHours(weekTotal)}*`),
-    ],
-  };
+export function loggedView({ results, weekLabel, weekTotal, urls }) {
+  const total = sum(results);
+  const footer = context(`${weekLabel}: *${formatHours(weekTotal)}*`);
+  if (results.length === 1) {
+    const [r] = results;
+    return {
+      text: `Logged ${formatHours(r.hours)} on ${r.wp.subject}`,
+      blocks: [
+        { type: "section", text: md(`:white_check_mark:  *${formatHours(r.hours)} logged*`) },
+        fields(
+          `*Task*\n<${urls.wp(r.wp.id)}|${escape(r.wp.subject)}>`,
+          `*Project*\n${escape(r.wp._links?.project?.title ?? "–")}`,
+          `*Date*\n${prettyDate(r.spentOn)}`,
+          ...(r.activityName ? [`*Activity*\n${escape(r.activityName)}`] : []),
+        ),
+        context([...(r.created.length ? [r.created.join(" + ")] : []), `${weekLabel}: *${formatHours(weekTotal)}*`].join("  ·  ")),
+      ],
+    };
+  }
+  const rows = [[bold("Task"), bold("Project"), bold("Activity"), bold("Date"), bold("Hours")]];
+  for (const r of results) {
+    rows.push([
+      link(r.wp.subject + (r.created.length ? "  (new)" : ""), urls.wp(r.wp.id)),
+      r.wp._links?.project?.title ?? "–",
+      r.activityName ?? "–",
+      prettyDate(r.spentOn),
+      formatHours(r.hours),
+    ]);
+  }
+  rows.push([bold("Total"), "", "", "", bold(formatHours(total))]);
+  return withTable(
+    `Logged ${results.length} entries (${formatHours(total)})`,
+    [{ type: "section", text: md(`:white_check_mark:  *${results.length} entries logged  ·  ${formatHours(total)}*`) }],
+    rows,
+    [null, null, null, null, "right"],
+    [footer],
+  );
 }
 
 export function projectsView({ projects, mine, team, urls, showTeam }) {

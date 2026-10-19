@@ -5,7 +5,7 @@ export const MAX_HOURS_PER_DAY = 24;
 
 // 2 | 1.5 | 2h | 1.5h | 45m | 1h30m | 1h 30m | 1:30
 const DURATION_PATTERN =
-  /^(?:(\d{1,2}(?:[.,]\d{1,2})?)\s*(?:h|hr|hrs|hours?)?|(\d{1,2})\s*(?:h|hr|hrs)\s*(\d{1,2})\s*(?:m|min|mins)?|(\d{1,4})\s*(?:m|min|mins|minutes?)|(\d{1,2}):([0-5]\d))$/i;
+  /^(?:(\d{1,6}(?:[.,]\d{1,2})?)\s*(?:h|hr|hrs|hours?)?|(\d{1,6})\s*(?:h|hr|hrs)\s*(\d{1,2})\s*(?:m|min|mins)?|(\d{1,7})\s*(?:m|min|mins|minutes?)|(\d{1,6}):([0-5]\d))$/i;
 
 /** Duration text -> hours (number), or null when the format is not recognised. */
 export function parseHours(input) {
