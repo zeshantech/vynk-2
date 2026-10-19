@@ -190,14 +190,89 @@ export function loggedView({ results, weekLabel, weekTotal, urls }) {
   );
 }
 
-export function projectsView({ projects, mine, team, urls, showTeam }) {
+const roleRank = (roles) => (roles.some((r) => /admin/i.test(r)) ? 0 : roles.some((r) => /member/i.test(r)) ? 1 : 2);
+const shortRole = (roles) => roles.map((r) => r.replace(/^project\s+/i, "").replace(/^./, (c) => c.toUpperCase())).join(", ") || "No role";
+
+function membersCell(list = []) {
+  if (!list.length) return "–";
+  const sorted = [...list].sort((a, b) => roleRank(a.roles) - roleRank(b.roles) || a.name.localeCompare(b.name));
+  const shown = sorted.slice(0, 3).map((m) => `${m.name} · ${shortRole(m.roles)}`);
+  return shown.join(", ") + (sorted.length > 3 ? `  +${sorted.length - 3}` : "");
+}
+
+export function projectsView({ projects, mine, team, members = [], urls, showTeam }) {
   const before = [header("Projects"), context(`${projects.length} project${projects.length === 1 ? "" : "s"}  ·  hours this week`)];
   if (!projects.length) return { text: "Projects", blocks: [...before, divider, { type: "section", text: md("No projects yet.") }] };
-  const rows = [[bold("Project"), bold("You"), ...(showTeam ? [bold("Team")] : [])]];
+  const byProject = groupBy(members, (m) => m.projectId);
+  const rows = [[bold("Project"), bold("Members"), bold("You"), ...(showTeam ? [bold("Team")] : [])]];
   for (const p of projects) {
-    rows.push([link(p.name, urls.project(p)), hoursOrDash(mine.get(p.id) ?? 0), ...(showTeam ? [hoursOrDash(team.get(p.id) ?? 0)] : [])]);
+    rows.push([
+      link(p.name, urls.project(p)),
+      membersCell(byProject.get(p.id)),
+      hoursOrDash(mine.get(p.id) ?? 0),
+      ...(showTeam ? [hoursOrDash(team.get(p.id) ?? 0)] : []),
+    ]);
   }
-  return withTable("Projects", before, rows.slice(0, 100), [null, "right", "right"]);
+  const listed = projects.slice(0, 100);
+  const manage =
+    listed.length <= 5
+      ? { type: "actions", elements: listed.map((p) => button(`Members · ${p.name}`.slice(0, 75), `pm_manage_${p.id}`, String(p.id))) }
+      : {
+          type: "actions",
+          elements: [
+            {
+              type: "static_select",
+              action_id: "pm_manage_select",
+              placeholder: plain("Manage members of…"),
+              options: listed.map((p) => ({ text: plain(p.name.slice(0, 75)), value: String(p.id) })),
+            },
+          ],
+        };
+  return withTable("Projects", before, rows.slice(0, 100), [null, null, "right", "right"], [manage]);
+}
+
+function peopleSummary(result, role) {
+  if (!result) return [];
+  const line = (label, list) => (list.length ? [context(`${label}: ${list.map(escape).join(", ")}`)] : []);
+  return [
+    ...line(`Added as ${escape(role ?? "member")}`, result.added),
+    ...line("Invited to Vynk and added", result.invited),
+    ...line("Already members", result.already),
+    ...line("Skipped", result.skipped),
+    ...line(":warning: Couldn't add", result.failed),
+  ];
+}
+
+export function projectCreatedView({ project, result, urls, inChannel = false, by = null }) {
+  return {
+    ...(inChannel ? { response_type: "in_channel" } : {}),
+    text: `Project ${project.name} created`,
+    blocks: [
+      {
+        type: "section",
+        text: md(`:white_check_mark:  *Project <${urls.project(project)}|${escape(project.name)}> created*${by ? ` by <@${by}>` : ""}`),
+      },
+      ...peopleSummary(result),
+      {
+        type: "actions",
+        elements: [button(result ? "Manage members" : "Add people", `pm_manage_${project.id}`, String(project.id), "primary")],
+      },
+    ],
+  };
+}
+
+export function membersAddedView({ projectName, role, result }) {
+  const changed = result.added.length + result.invited.length;
+  return {
+    text: `${projectName}: ${changed} member${changed === 1 ? "" : "s"} added`,
+    blocks: [
+      {
+        type: "section",
+        text: md(`${changed ? ":white_check_mark:" : ":information_source:"}  *${escape(projectName)}*  ·  ${changed} added`),
+      },
+      ...peopleSummary(result, role),
+    ],
+  };
 }
 
 export function tasksView({ tasks, urls }) {

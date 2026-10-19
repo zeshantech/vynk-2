@@ -19,6 +19,8 @@ import {
   weekContaining,
 } from "./time.js";
 import {
+  membersAddedView,
+  projectCreatedView,
   connectView,
   eodConnectView,
   eodDismissedView,
@@ -194,7 +196,8 @@ async function projectsReply({ cmd, client }) {
     team.set(e.projectId, (team.get(e.projectId) ?? 0) + e.hours);
     if (e.userId === user.id) mine.set(e.projectId, (mine.get(e.projectId) ?? 0) + e.hours);
   }
-  return projectsView({ projects, mine, team, urls, showTeam: Boolean(user.admin) });
+  const members = await user.api.memberships(projects.slice(0, 100).map((p) => p.id)).catch(() => []);
+  return projectsView({ projects, mine, team, members, urls, showTeam: Boolean(user.admin) });
 }
 
 command("/projects", projectsReply);
@@ -205,30 +208,158 @@ async function createProjectFor(admin, name) {
   return project;
 }
 
+const roleOption = (r) => option(r.name, r.id);
+
+async function memberRoles(user) {
+  const roles = await cached(`roles:${user.id}`, 10 * 60_000, () => user.api.projectRoles());
+  if (!roles.length) throw new UserFacingError("No project roles are set up in Vynk.");
+  return { roles, fallback: roles.find((r) => /^member$/i.test(r.name)) ?? roles[0] };
+}
+
+/**
+ * Adds Slack users to a Vynk project. People without a Vynk account are invited when the
+ * actor is a Vynk admin. Permissions are checked by Vynk itself (actor's own session).
+ */
+async function addPeople({ actor, client, projectId, slackUserIds, roleId }) {
+  const result = { added: [], already: [], invited: [], skipped: [], failed: [] };
+  const existing = new Set((await actor.api.memberships([projectId]).catch(() => [])).map((m) => m.userId));
+  for (const slackUserId of [...new Set(slackUserIds)]) {
+    const { user: slackUser } = await client.users.info({ user: slackUserId }).catch(() => ({ user: null }));
+    const name = slackUser?.real_name || slackUser?.profile?.real_name || slackUser?.name || "Someone";
+    const email = slackUser?.profile?.email;
+    if (!slackUser || slackUser.is_bot || slackUser.deleted) {
+      result.skipped.push(`${name} (not a person)`);
+      continue;
+    }
+    if (!email) {
+      result.skipped.push(`${name} (no email in Slack)`);
+      continue;
+    }
+    try {
+      let person = await op.userByEmail(email);
+      if (!person) {
+        if (!actor.admin) {
+          result.skipped.push(`${name} (no Vynk account; ask an admin to invite them)`);
+          continue;
+        }
+        const [firstName, ...rest] = (slackUser.profile?.real_name || name).trim().split(/\s+/);
+        person = await op.inviteUser({ email, firstName: firstName || email.split("@")[0], lastName: rest.join(" ") || "-" });
+        op.userCache.delete(email.toLowerCase());
+        result.invited.push(name);
+      }
+      if (existing.has(person.id)) {
+        result.already.push(name);
+        continue;
+      }
+      await actor.api.addMembership({ projectId, userId: person.id, roleId });
+      existing.add(person.id);
+      if (!result.invited.includes(name)) result.added.push(name);
+    } catch (err) {
+      const reason =
+        err.status === 403
+          ? "you can't manage members of this project"
+          : err instanceof OpenProjectError
+            ? err.message
+            : "something went wrong";
+      if (!(err instanceof OpenProjectError)) app.logger.error("adding member failed", err);
+      result.failed.push(`${name} (${reason})`);
+    }
+  }
+  cache.delete(`projects:${actor.id}`);
+  return result;
+}
+
+function peopleBlocks({ roles, fallback, label = "Invite people" }) {
+  return [
+    input("people", label, { type: "multi_users_select", placeholder: plain("Choose people from Slack") }, true),
+    input("role", "Role", { type: "static_select", options: roles.map(roleOption), initial_option: roleOption(fallback) }),
+  ];
+}
+
 command("/create-project", async ({ cmd, client, text }) => {
   const admin = await requireAdmin(client, cmd.user_id);
   if (!text) return "Usage: `/create-project Project name`";
   const project = await createProjectFor(admin, text);
-  return {
-    response_type: "in_channel",
-    text: `:white_check_mark: Project <${projectUrl(project)}|${escape(project.name)}> created by <@${cmd.user_id}>.`,
-  };
+  return projectCreatedView({ project, result: null, urls, inChannel: true, by: cmd.user_id });
 });
 
 app.view("create_project", async ({ ack, body, view, client, logger }) => {
-  const name = view.state.values.name.value.value?.trim();
+  const values = view.state.values;
+  const name = values.name.value.value?.trim();
   if (!name) {
     await ack({ response_action: "errors", errors: { name: "Name is required" } });
     return;
   }
   await ack();
-  const dm = (text) => client.chat.postMessage({ channel: body.user.id, text });
+  const dm = (msg) => client.chat.postMessage({ channel: body.user.id, ...(typeof msg === "string" ? { text: msg } : msg) });
   try {
     const admin = await requireAdmin(client, body.user.id);
     const project = await createProjectFor(admin, name);
-    await dm(`:white_check_mark: Project <${projectUrl(project)}|${escape(project.name)}> created.`);
+    const people = (values.people?.value.selected_users ?? []).filter((id) => id !== body.user.id);
+    const roleId = Number(values.role?.value.selected_option?.value);
+    const result =
+      people.length && roleId ? await addPeople({ actor: admin, client, projectId: project.id, slackUserIds: people, roleId }) : null;
+    await dm(projectCreatedView({ project, result, urls }));
   } catch (err) {
     if (!(err instanceof UserFacingError)) logger.error("create_project submit failed", err);
+    await dm(errorText(err));
+  }
+});
+
+function openMembersModal(client, triggerId, slackUserId, projectId) {
+  return openForm(client, triggerId, "Project members", async () => {
+    const user = await vynkUser(client, slackUserId);
+    const projects = await cached(`projects:${user.id}`, 60_000, () => user.api.projectsFor(user));
+    const project = projects.find((p) => p.id === projectId);
+    if (!project) throw new UserFacingError("That project isn't available to you.");
+    const [members, roleInfo] = await Promise.all([user.api.memberships([projectId]), memberRoles(user)]);
+    const list = members
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((m) => `${escape(m.name)}  ·  _${escape(m.roles.join(", ") || "No role")}_`);
+    return {
+      callbackId: "pm_members",
+      submit: "Add people",
+      privateMetadata: JSON.stringify({ projectId, projectName: project.name }),
+      blocks: [
+        {
+          type: "section",
+          text: { type: "mrkdwn", text: `*${escape(project.name)}*\n${members.length} member${members.length === 1 ? "" : "s"}` },
+        },
+        {
+          type: "section",
+          text: { type: "mrkdwn", text: (list.length ? list.slice(0, 40).join("\n") : "_No members yet_").slice(0, 2900) },
+        },
+        ...(list.length > 40 ? [{ type: "context", elements: [{ type: "mrkdwn", text: `+${list.length - 40} more` }] }] : []),
+        { type: "divider" },
+        ...peopleBlocks({ ...roleInfo, label: "Add people" }),
+      ],
+    };
+  });
+}
+
+app.action(/^pm_manage/, async ({ ack, body, action, client }) => {
+  await ack();
+  const projectId = Number(action.value ?? action.selected_option?.value);
+  await openMembersModal(client, body.trigger_id, body.user.id, projectId);
+});
+
+app.view("pm_members", async ({ ack, body, view, client, logger }) => {
+  const values = view.state.values;
+  const meta = JSON.parse(view.private_metadata || "{}");
+  const people = values.people?.value.selected_users ?? [];
+  if (!people.length) {
+    await ack({ response_action: "errors", errors: { people: "Choose at least one person" } });
+    return;
+  }
+  await ack();
+  const dm = (msg) => client.chat.postMessage({ channel: body.user.id, ...(typeof msg === "string" ? { text: msg } : msg) });
+  try {
+    const actor = await vynkUser(client, body.user.id);
+    const roleId = Number(values.role.value.selected_option.value);
+    const result = await addPeople({ actor, client, projectId: meta.projectId, slackUserIds: people, roleId });
+    await dm(membersAddedView({ projectName: meta.projectName, role: values.role.value.selected_option.text.text, result }));
+  } catch (err) {
+    if (!(err instanceof UserFacingError)) logger.error("pm_members submit failed", err);
     await dm(errorText(err));
   }
 });
@@ -310,8 +441,20 @@ function openCreateTaskModal(client, triggerId, slackUserId, subject) {
 
 function openCreateProjectModal(client, triggerId, slackUserId) {
   return openForm(client, triggerId, "New project", async () => {
-    await requireAdmin(client, slackUserId);
-    return { callbackId: "create_project", submit: "Create", blocks: [input("name", "Project name", { type: "plain_text_input" })] };
+    const admin = await requireAdmin(client, slackUserId);
+    return {
+      callbackId: "create_project",
+      submit: "Create",
+      blocks: [
+        input("name", "Project name", { type: "plain_text_input", placeholder: plain("e.g. Website Redesign") }),
+        { type: "divider" },
+        ...peopleBlocks(await memberRoles(admin)),
+        {
+          type: "context",
+          elements: [{ type: "mrkdwn", text: "You're added as Project admin. People without a Vynk account get an email invite." }],
+        },
+      ],
+    };
   });
 }
 

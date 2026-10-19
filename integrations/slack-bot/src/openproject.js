@@ -142,6 +142,46 @@ export class OpenProject {
     });
   }
 
+  /** Roles that can be given to project members (e.g. Project admin, Member, Reader). */
+  async projectRoles() {
+    const data = await this.request(
+      "GET",
+      `/api/v3/roles?filters=${filters([{ grantable: { operator: "=", values: ["t"] } }, { unit: { operator: "=", values: ["project"] } }])}`,
+    ).catch(() => this.request("GET", "/api/v3/roles"));
+    return (data?._embedded?.elements ?? []).filter((r) => !/non member|anonymous/i.test(r.name)).map((r) => ({ id: r.id, name: r.name }));
+  }
+
+  /** Members of the given projects: [{ id, projectId, userId, name, roles: [names] }]. */
+  async memberships(projectIds) {
+    if (!projectIds.length) return [];
+    const data = await this.request(
+      "GET",
+      `/api/v3/memberships?pageSize=1000&filters=${filters([{ project: { operator: "=", values: projectIds.map(String) } }])}`,
+    );
+    return (data?._embedded?.elements ?? []).map((m) => ({
+      id: m.id,
+      projectId: idFromHref(m._links?.project?.href),
+      userId: idFromHref(m._links?.principal?.href),
+      name: m._links?.principal?.title ?? "Unknown",
+      roles: (m._links?.roles ?? []).map((r) => r.title),
+    }));
+  }
+
+  addMembership({ projectId, userId, roleId }) {
+    return this.request("POST", "/api/v3/memberships", {
+      _links: {
+        principal: { href: `/api/v3/users/${userId}` },
+        project: { href: `/api/v3/projects/${projectId}` },
+        roles: [{ href: `/api/v3/roles/${roleId}` }],
+      },
+    });
+  }
+
+  /** Creates an invited user (Vynk emails them an invitation). Needs admin rights. */
+  inviteUser({ email, firstName, lastName }) {
+    return this.request("POST", "/api/v3/users", { email, login: email, firstName, lastName, status: "invited" });
+  }
+
   // ---------- work packages ----------
   async taskType(projectId) {
     const data = await this.request("GET", `/api/v3/projects/${projectId}/types`);
