@@ -36,6 +36,63 @@ export function prettyRange(from, to) {
   return `${a.toLocaleDateString("en-US", opts)} – ${end}`;
 }
 
+// Slack "table" block (one per message). Each view also carries a monospace fallback
+// in case a client/workspace rejects table blocks.
+const cell = (rawText, { bold = false, url } = {}) => {
+  const text = String(rawText ?? "") || " ";
+  return {
+    type: "rich_text",
+    elements: [
+      {
+        type: "rich_text_section",
+        elements: [
+          url
+            ? { type: "link", url, text: String(text), ...(bold ? { style: { bold: true } } : {}) }
+            : { type: "text", text: String(text), ...(bold ? { style: { bold: true } } : {}) },
+        ],
+      },
+    ],
+  };
+};
+
+function table(rows, align = []) {
+  return {
+    type: "table",
+    column_settings: align.map((a) => ({ align: a ?? "left" })),
+    rows: rows.map((row) => row.map((c) => (typeof c === "object" ? cell(c.text, c) : cell(c)))),
+  };
+}
+
+function monospace(rows, align = []) {
+  const plainRows = rows.map((row) => row.map((c) => String(typeof c === "object" ? c.text : c)));
+  const widths = plainRows[0].map((_, i) => Math.min(28, Math.max(...plainRows.map((r) => r[i].length))));
+  const line = (r) =>
+    r
+      .map((v, i) =>
+        v.length > widths[i] ? `${v.slice(0, widths[i] - 1)}…` : align[i] === "right" ? v.padStart(widths[i]) : v.padEnd(widths[i]),
+      )
+      .join("  ");
+  const out = [line(plainRows[0]), widths.map((w) => "─".repeat(w)).join("  "), ...plainRows.slice(1).map(line)];
+  return { type: "section", text: md("```" + out.join("\n") + "```") };
+}
+
+/** Message with a table, plus `fallback` (same message with a monospace table). */
+function withTable(text, before, rows, align, after = []) {
+  return {
+    text,
+    blocks: [...before, table(rows, align), ...after],
+    fallback: { text, blocks: [...before, monospace(rows, align), ...after] },
+  };
+}
+
+const clock = (h) => {
+  if (!h) return "–";
+  const m = Math.round(h * 60);
+  return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`;
+};
+const bold = (text, url) => ({ text, bold: true, ...(url ? { url } : {}) });
+const link = (text, url) => ({ text, ...(url ? { url } : {}) });
+
 const sum = (list) => list.reduce((s, e) => s + e.hours, 0);
 const hoursOrDash = (h) => (h ? formatHours(h) : "–");
 
@@ -49,49 +106,49 @@ function groupBy(list, key) {
   return map;
 }
 
-/** One card per project with its total and per-task breakdown. */
+/** Timesheet grid: one row per task (grouped by project), one column per day. */
 export function weekView({ label, week, entries, urls, otherWeekLabel, otherWeekValue }) {
   const total = sum(entries);
-  const blocks = [header(`${label}  ·  ${formatHours(total)}`), context(prettyRange(week.from, week.to))];
+  const before = [header(`${label}  ·  ${formatHours(total)}`), context(`${prettyRange(week.from, week.to)}  ·  hours as h:mm`)];
+  const after = [
+    {
+      type: "actions",
+      elements: [button("Log time", "open_log_time", "log", "primary"), button(otherWeekLabel, "show_week", otherWeekValue)],
+    },
+  ];
+  if (!entries.length)
+    return {
+      text: `${label}: nothing logged`,
+      blocks: [...before, divider, { type: "section", text: md("Nothing logged yet.") }, ...after],
+    };
 
-  if (!entries.length) {
-    blocks.push(divider, { type: "section", text: md("Nothing logged yet.") });
-  } else {
-    blocks.push(
-      context(
-        week.days
-          .map((day, i) => {
-            const h = sum(entries.filter((e) => e.spentOn === day));
-            return h ? `*${DAY_NAMES[i]}* ${formatHours(h)}` : `${DAY_NAMES[i]} –`;
-          })
-          .join("     "),
-      ),
-    );
-    const projects = [...groupBy(entries, (e) => e.projectTitle ?? "Other").entries()].sort((a, b) => sum(b[1]) - sum(a[1]));
-    for (const [project, list] of projects) {
-      const tasks = [...groupBy(list, (e) => e.workPackageId ?? 0).values()].sort((a, b) => sum(b) - sum(a));
-      blocks.push(
-        divider,
-        fields(`*${escape(project)}*`, `*${formatHours(sum(list))}*`),
-        context(
-          tasks
-            .slice(0, 8)
-            .map((t) => {
-              const title = escape(t[0].workPackageTitle ?? "Other");
-              const link = t[0].workPackageId ? `<${urls.wp(t[0].workPackageId)}|${title}>` : title;
-              return `${link}  ${formatHours(sum(t))}`;
-            })
-            .join("     ·     "),
-        ),
-      );
-    }
+  const dayCells = (list, asBold) =>
+    week.days.map((d) => {
+      const h = sum(list.filter((e) => e.spentOn === d));
+      return asBold && h ? bold(clock(h)) : clock(h);
+    });
+  const rows = [["Project", "Task", ...DAY_NAMES, "Total"].map((t) => bold(t))];
+  const projects = [...groupBy(entries, (e) => e.projectTitle ?? "Other").entries()].sort((a, b) => sum(b[1]) - sum(a[1]));
+  for (const [project, list] of projects) {
+    const tasks = [...groupBy(list, (e) => e.workPackageId ?? 0).values()].sort((a, b) => sum(b) - sum(a));
+    tasks.forEach((t, index) => {
+      rows.push([
+        index === 0 ? bold(project) : "",
+        link(t[0].workPackageTitle ?? "Other", t[0].workPackageId ? urls.wp(t[0].workPackageId) : null),
+        ...dayCells(t),
+        clock(sum(t)),
+      ]);
+    });
+    if (tasks.length > 1) rows.push(["", bold(`${project} total`), ...dayCells(list, true), bold(clock(sum(list)))]);
   }
-
-  blocks.push(divider, {
-    type: "actions",
-    elements: [button("Log time", "open_log_time", "log", "primary"), button(otherWeekLabel, "show_week", otherWeekValue)],
-  });
-  return { text: `${label}: ${formatHours(total)}`, blocks };
+  rows.push([bold("Total"), "", ...dayCells(entries, true), bold(clock(total))]);
+  return withTable(
+    `${label}: ${formatHours(total)}`,
+    before,
+    rows.slice(0, 100),
+    [null, null, ...DAY_NAMES.map(() => "right"), "right"],
+    after,
+  );
 }
 
 export function loggedView({ hours, wp, projectName, activityName, spentOn, weekLabel, weekTotal, created, urls }) {
@@ -112,14 +169,13 @@ export function loggedView({ hours, wp, projectName, activityName, spentOn, week
 }
 
 export function projectsView({ projects, mine, team, urls, showTeam }) {
-  const blocks = [header("Projects"), context(`${projects.length} project${projects.length === 1 ? "" : "s"}  ·  hours this week`)];
-  if (!projects.length) blocks.push(divider, { type: "section", text: md("No projects yet.") });
+  const before = [header("Projects"), context(`${projects.length} project${projects.length === 1 ? "" : "s"}  ·  hours this week`)];
+  if (!projects.length) return { text: "Projects", blocks: [...before, divider, { type: "section", text: md("No projects yet.") }] };
+  const rows = [[bold("Project"), bold("You"), ...(showTeam ? [bold("Team")] : [])]];
   for (const p of projects) {
-    const you = mine.get(p.id) ?? 0;
-    const value = showTeam ? `*${hoursOrDash(team.get(p.id) ?? 0)}* team  ·  ${hoursOrDash(you)} you` : `*${hoursOrDash(you)}*`;
-    blocks.push(divider, fields(`*<${urls.project(p)}|${escape(p.name)}>*`, value));
+    rows.push([link(p.name, urls.project(p)), hoursOrDash(mine.get(p.id) ?? 0), ...(showTeam ? [hoursOrDash(team.get(p.id) ?? 0)] : [])]);
   }
-  return { text: "Projects", blocks };
+  return withTable("Projects", before, rows.slice(0, 100), [null, "right", "right"]);
 }
 
 export function tasksView({ tasks, urls }) {
@@ -147,13 +203,36 @@ export function tasksView({ tasks, urls }) {
   return { text: "Your open tasks", blocks };
 }
 
-export function teamView({ label, week, rows }) {
-  const total = rows.reduce((s, r) => s + r.hours, 0);
-  const blocks = [header(`Team  ·  ${label}  ·  ${formatHours(total)}`), context(prettyRange(week.from, week.to))];
-  for (let i = 0; i < rows.length; i += 5) {
-    blocks.push(divider, fields(...rows.slice(i, i + 5).flatMap((r) => [escape(r.name), r.hours ? `*${formatHours(r.hours)}*` : "–"])));
+/** Hours per person, broken down by project. */
+export function teamView({ label, week, users, entries }) {
+  const total = sum(entries);
+  const before = [header(`Team  ·  ${label}  ·  ${formatHours(total)}`), context(prettyRange(week.from, week.to))];
+  const byUser = groupBy(entries, (e) => e.userId);
+  const people = users
+    .map((u) => ({ name: u.name, list: byUser.get(u.id) ?? [] }))
+    .concat(
+      [...byUser.entries()]
+        .filter(([id]) => !users.some((u) => u.id === id))
+        .map(([, list]) => ({ name: list[0].userName ?? "Unknown", list })),
+    )
+    .sort((a, b) => sum(b.list) - sum(a.list));
+
+  const rows = [[bold("Person"), bold("Project"), bold("Hours")]];
+  for (const person of people) {
+    const projects = [...groupBy(person.list, (e) => e.projectTitle ?? "Other").entries()].sort((a, b) => sum(b[1]) - sum(a[1]));
+    if (!projects.length) {
+      rows.push([person.name, "–", "–"]);
+      continue;
+    }
+    projects.forEach(([project, list], index) => rows.push([index === 0 ? bold(person.name) : "", project, formatHours(sum(list))]));
+    if (projects.length > 1) rows.push(["", bold("Total"), bold(formatHours(sum(person.list)))]);
   }
-  return { text: `Team hours: ${formatHours(total)}`, blocks };
+
+  const suspicious = people.filter((p) => [...groupBy(p.list, (e) => e.spentOn).values()].some((day) => sum(day) > 24)).map((p) => p.name);
+  const after = suspicious.length
+    ? [context(`:warning:  Over 24h in a single day: ${suspicious.map(escape).join(", ")}. Please check those entries in Vynk.`)]
+    : [];
+  return withTable(`Team hours: ${formatHours(total)}`, before, rows.slice(0, 100), [null, null, "right"], after);
 }
 
 export function menuView(options) {

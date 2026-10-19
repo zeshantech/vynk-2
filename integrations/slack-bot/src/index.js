@@ -1,7 +1,17 @@
 import bolt from "@slack/bolt";
 import { OpenProject, OpenProjectError } from "./openproject.js";
 import { parseCreateTask, parseLogTime } from "./commands.js";
-import { MAX_HOURS_PER_DAY, MAX_HOURS_PER_ENTRY, currentWeek, formatHours, hoursError, parseHours, resolveDate, todayIn, weekContaining } from "./time.js";
+import {
+  MAX_HOURS_PER_DAY,
+  MAX_HOURS_PER_ENTRY,
+  currentWeek,
+  formatHours,
+  hoursError,
+  parseHours,
+  resolveDate,
+  todayIn,
+  weekContaining,
+} from "./time.js";
 import { loggedView, menuView, prettyDate, projectsView, tasksView, teamView, weekView } from "./views.js";
 
 const { App, LogLevel } = bolt;
@@ -66,6 +76,20 @@ function errorText(err) {
   return ":x: Something went wrong. Please try again.";
 }
 
+/** Sends a reply; if Slack rejects the table block, resends with the monospace fallback. */
+async function deliver(send, msg) {
+  const { fallback, ...main } = msg;
+  if (!fallback) return send(main);
+  try {
+    const res = await send(main);
+    if (res?.data?.ok === false) throw new Error(res.data.error);
+    return res;
+  } catch (err) {
+    app.logger.warn(`table block rejected (${err.data?.error ?? err.message}), using fallback`);
+    return send({ ...main, ...fallback });
+  }
+}
+
 /** Acks immediately (Slack's 3s limit) and replies ephemerally with the handler's result or error. */
 function command(name, handler) {
   app.command(name, async ({ ack, command: cmd, client, respond, logger }) => {
@@ -73,7 +97,10 @@ function command(name, handler) {
     try {
       const reply = await handler({ cmd, client, text: cmd.text?.trim() ?? "" });
       if (reply)
-        await respond(typeof reply === "string" ? { response_type: "ephemeral", text: reply } : { response_type: "ephemeral", ...reply });
+        await deliver(
+          respond,
+          typeof reply === "string" ? { response_type: "ephemeral", text: reply } : { response_type: "ephemeral", ...reply },
+        );
     } catch (err) {
       if (!(err instanceof UserFacingError)) logger.error(`${name} failed`, err);
       await respond({ response_type: "ephemeral", text: errorText(err) });
@@ -547,14 +574,7 @@ async function teamHours({ cmd, client, text }) {
   const weeksBack = /^last/i.test(text) ? 1 : 0;
   const week = currentWeek(TZ, weeksBack);
   const [entries, users] = await Promise.all([op.timeEntries({ from: week.from, to: week.to }), op.activeUsers()]);
-  const totals = new Map(users.map((u) => [u.id, { name: u.name, hours: 0 }]));
-  for (const e of entries) {
-    const row = totals.get(e.userId) ?? { name: e.userName ?? "Unknown", hours: 0 };
-    row.hours += e.hours;
-    totals.set(e.userId, row);
-  }
-  const rows = [...totals.values()].sort((a, b) => b.hours - a.hours);
-  return teamView({ label: weeksBack ? "Last week" : "This week", week, rows });
+  return teamView({ label: weeksBack ? "Last week" : "This week", week, users, entries });
 }
 
 command("/team-hours", teamHours);
@@ -601,7 +621,8 @@ app.action("vynk_menu", async ({ ack, body, action, client, respond, logger }) =
   await ack();
   const userId = body.user.id;
   const cmd = { user_id: userId };
-  const reply = (r) => respond({ response_type: "ephemeral", replace_original: false, ...(typeof r === "string" ? { text: r } : r) });
+  const reply = (r) =>
+    deliver(respond, { response_type: "ephemeral", replace_original: false, ...(typeof r === "string" ? { text: r } : r) });
   try {
     switch (action.selected_option.value) {
       case "log_time":
@@ -640,7 +661,10 @@ app.action("open_log_time", async ({ ack, body, client }) => {
 app.action("show_week", async ({ ack, body, action, client, respond, logger }) => {
   await ack();
   try {
-    await respond({ replace_original: true, ...(await weekHours({ cmd: { user_id: body.user.id }, client, text: action.value })) });
+    await deliver(respond, {
+      replace_original: true,
+      ...(await weekHours({ cmd: { user_id: body.user.id }, client, text: action.value })),
+    });
   } catch (err) {
     if (!(err instanceof UserFacingError)) logger.error("show_week failed", err);
     await respond({ response_type: "ephemeral", replace_original: false, text: errorText(err) });
