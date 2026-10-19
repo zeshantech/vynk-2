@@ -221,6 +221,9 @@ async function memberRoles(user) {
  * actor is a Vynk admin. Permissions are checked by Vynk itself (actor's own session).
  */
 async function addPeople({ actor, client, projectId, slackUserIds, roleId }) {
+  if (!allowed((await permissions(actor)).manageMembers, projectId)) {
+    throw new UserFacingError("Only project admins can add members to this project.");
+  }
   const result = { added: [], already: [], invited: [], skipped: [], failed: [] };
   const existing = new Set((await actor.api.memberships([projectId]).catch(() => [])).map((m) => m.userId));
   for (const slackUserId of [...new Set(slackUserIds)]) {
@@ -312,13 +315,14 @@ function openMembersModal(client, triggerId, slackUserId, projectId) {
     const projects = await cached(`projects:${user.id}`, 60_000, () => user.api.projectsFor(user));
     const project = projects.find((p) => p.id === projectId);
     if (!project) throw new UserFacingError("That project isn't available to you.");
-    const [members, roleInfo] = await Promise.all([user.api.memberships([projectId]), memberRoles(user)]);
+    const [members, roleInfo, perms] = await Promise.all([user.api.memberships([projectId]), memberRoles(user), permissions(user)]);
+    const canManage = allowed(perms.manageMembers, projectId);
     const list = members
       .sort((a, b) => a.name.localeCompare(b.name))
       .map((m) => `${escape(m.name)}  ·  _${escape(m.roles.join(", ") || "No role")}_`);
     return {
       callbackId: "pm_members",
-      submit: "Add people",
+      submit: canManage ? "Add people" : null,
       privateMetadata: JSON.stringify({ projectId, projectName: project.name }),
       blocks: [
         {
@@ -331,7 +335,9 @@ function openMembersModal(client, triggerId, slackUserId, projectId) {
         },
         ...(list.length > 40 ? [{ type: "context", elements: [{ type: "mrkdwn", text: `+${list.length - 40} more` }] }] : []),
         { type: "divider" },
-        ...peopleBlocks({ ...roleInfo, label: "Add people" }),
+        ...(canManage
+          ? peopleBlocks({ ...roleInfo, label: "Add people" })
+          : [{ type: "context", elements: [{ type: "mrkdwn", text: "Only project admins can add members to this project." }] }]),
       ],
     };
   });
@@ -376,7 +382,8 @@ command("/my-tasks", myTasksReply);
 const unassignedNote = (wp) => (wp.assigneeSkipped ? " _(left unassigned: that person isn't a member of the project)_" : "");
 
 async function projectOptions(user) {
-  const projects = await user.api.projectsFor(user);
+  const perms = await permissions(user);
+  const projects = (await user.api.projectsFor(user)).filter((p) => allowed(perms.createTask, p.id));
   return projects.slice(0, 100).map((p) => ({ text: { type: "plain_text", text: p.name.slice(0, 75) }, value: String(p.id) }));
 }
 
@@ -403,7 +410,7 @@ async function openForm(client, triggerId, title, build) {
       view: {
         ...shell,
         callback_id: callbackId,
-        submit: { type: "plain_text", text: submit },
+        ...(submit ? { submit: { type: "plain_text", text: submit } } : {}),
         ...(privateMetadata ? { private_metadata: privateMetadata } : {}),
         blocks,
       },
@@ -425,7 +432,8 @@ function openCreateTaskModal(client, triggerId, slackUserId, subject) {
   return openForm(client, triggerId, "New task", async () => {
     const user = await vynkUser(client, slackUserId);
     const options = await projectOptions(user);
-    if (!options.length) throw new UserFacingError("There are no projects yet.");
+    if (!options.length)
+      throw new UserFacingError("You can't create tasks in any of your projects. Ask a project admin for a role that allows it.");
     return {
       callbackId: "create_task",
       submit: "Create",
@@ -466,6 +474,8 @@ app.command("/create-task", async ({ ack, command: cmd, client, respond, logger 
       const user = await vynkUser(client, cmd.user_id);
       const project = await user.api.findProject(projectName);
       if (!project) throw new UserFacingError(`No project matches *${escape(projectName)}*. Try \`/projects\`.`);
+      if (!allowed((await permissions(user)).createTask, project.id))
+        throw new UserFacingError(`You can't create tasks in ${escape(project.name)}.`);
       const wp = await user.api.createTask({ projectId: project.id, subject, assigneeId: user.id });
       await respond({
         response_type: "ephemeral",
@@ -495,6 +505,7 @@ app.view("create_task", async ({ ack, body, view, client, logger }) => {
     const assignee = assigneeSlack ? { id: await vynkIdFor(client, assigneeSlack) } : null;
     if (assignee && !assignee.id) assignee.id = null;
     const projectId = Number(values.project.value.selected_option.value);
+    if (!allowed((await permissions(user)).createTask, projectId)) throw new UserFacingError("You can't create tasks in this project.");
     const wp = await user.api.createTask({ projectId, subject, assigneeId: assignee?.id, description: values.description.value.value });
     const who = assignee?.id ? ` for <@${assigneeSlack}>` : "";
     await dm(`:white_check_mark: Created <${wpUrl(wp.id)}|${escape(wp.subject)}>${wp.assigneeSkipped ? "" : who}.${unassignedNote(wp)}`);
@@ -510,6 +521,21 @@ const MAX_ENTRIES = 8;
 
 /** Saves several entries; checks the daily limit for all of them before saving any. */
 async function logEntries(user, entries) {
+  const perms = await permissions(user);
+  for (const e of entries) {
+    let projectId = e.projectId;
+    if (e.workPackageId) {
+      const wp = await user.api.workPackage(e.workPackageId).catch((err) => {
+        if (err.status === 404) throw new UserFacingError("That task doesn't exist, or you don't have access to it.");
+        throw err;
+      });
+      projectId = idFromLink(wp._links?.project);
+    } else if (!allowed(perms.createTask, projectId)) {
+      throw new UserFacingError("You can't create tasks in this project. Pick an existing task instead.");
+    }
+    if (e.subtask && !allowed(perms.createTask, projectId)) throw new UserFacingError("You can't create subtasks in this project.");
+    if (!allowed(perms.logTime, projectId)) throw new UserFacingError("You can't log time in this project.");
+  }
   const dates = entries.map((e) => e.spentOn).sort();
   const from = weekContaining(dates[0]).from;
   const to = weekContaining(dates[dates.length - 1]).to;
@@ -610,16 +636,18 @@ const plain = (text) => ({ type: "plain_text", text });
 
 const LOG_TIME_ACTIONS = ["time_entries/create_own", "time_entries/create"];
 const CREATE_TASK_ACTIONS = ["work_packages/create"];
+const MANAGE_MEMBERS_ACTIONS = ["memberships/create"];
 
 /** What the user may do per project, from Vynk's permissions. Admins may do everything (null = all). */
 async function permissions(user) {
-  if (user.admin) return { logTime: null, createTask: null };
+  if (user.admin) return { logTime: null, createTask: null, manageMembers: null };
   return cached(`perms:${user.id}`, 60_000, async () => {
-    const [logTime, createTask] = await Promise.all([
+    const [logTime, createTask, manageMembers] = await Promise.all([
       op.capabilityProjects(user.id, LOG_TIME_ACTIONS),
       op.capabilityProjects(user.id, CREATE_TASK_ACTIONS),
+      op.capabilityProjects(user.id, MANAGE_MEMBERS_ACTIONS),
     ]);
-    return { logTime, createTask };
+    return { logTime, createTask, manageMembers };
   });
 }
 
