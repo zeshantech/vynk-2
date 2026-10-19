@@ -905,12 +905,19 @@ function entryBlocks(n, { projectOptions, activities, prev = {}, preset = {} }) 
   };
   const task = prev[`e${n}_task`]?.option ?? preset.task;
   return [
-    input(`e${n}_project`, "Project", {
-      type: "static_select",
-      placeholder: plain("Choose a project"),
-      options: projectOptions,
-      ...(has(projectOptions, project) ? { initial_option: project } : {}),
-    }),
+    {
+      type: "input",
+      block_id: `e${n}_project`,
+      dispatch_action: true,
+      label: plain("Project"),
+      element: {
+        type: "static_select",
+        action_id: "lt_entry_project",
+        placeholder: plain("Choose a project"),
+        options: projectOptions,
+        ...(has(projectOptions, project) ? { initial_option: project } : {}),
+      },
+    },
     {
       type: "input",
       block_id: `e${n}_task`,
@@ -977,7 +984,7 @@ function entryBlocks(n, { projectOptions, activities, prev = {}, preset = {} }) 
 function readEntry(values, n, errors, { optionalHours = false, comment = "" } = {}) {
   const rawHours = values[`e${n}_hours`]?.value.value?.trim();
   if (!rawHours && optionalHours) return { skip: true };
-  const projectId = Number(values[`e${n}_project`]?.value.selected_option?.value) || null;
+  const projectId = Number(Object.values(values[`e${n}_project`] ?? {})[0]?.selected_option?.value) || null;
   const task = values[`e${n}_task`]?.lt_task?.selected_option?.value;
   const spentOn = values[`e${n}_date`]?.value.selected_date;
   const durationError = hoursError(rawHours);
@@ -1031,7 +1038,10 @@ function logTimeView({ projects, hidden = [], activities }, meta, prev = {}) {
       elements: [{ type: "mrkdwn", text: `Not shown, you can't log time there: ${hidden.map((p) => escape(p.name)).join(", ")}` }],
     });
   }
+  const entryProjects = {};
   for (let n = 1; n <= count; n++) {
+    const chosen = prev[`e${n}_project`]?.option ?? (projectOptions.length === 1 ? projectOptions[0] : undefined);
+    if (chosen) entryProjects[n] = Number(chosen.value);
     blocks.push(
       ...(n > 1 || hidden.length ? [{ type: "divider" }] : []),
       ...(count > 1 ? [{ type: "section", text: { type: "mrkdwn", text: `*Entry ${n}*` } }] : []),
@@ -1054,7 +1064,7 @@ function logTimeView({ projects, hidden = [], activities }, meta, prev = {}) {
   return {
     type: "modal",
     callback_id: "log_time",
-    private_metadata: JSON.stringify({ count }),
+    private_metadata: JSON.stringify({ count, projects: entryProjects }),
     title: plain("Log time"),
     submit: plain("Log time"),
     close: plain("Cancel"),
@@ -1102,6 +1112,32 @@ async function refreshLogTimeView({ body, client, logger }, change) {
   }
 }
 
+// Slack doesn't send other field values with task searches, so keep each entry's project in the form's metadata.
+app.action("lt_entry_project", async ({ ack, body, action, client, logger }) => {
+  await ack();
+  try {
+    const n = Number(String(action.block_id).match(/^e(\d+)_/)?.[1]);
+    const meta = JSON.parse(body.view.private_metadata || "{}");
+    meta.projects = { ...(meta.projects ?? {}), [n]: Number(action.selected_option.value) };
+    const v = body.view;
+    const view = {
+      type: "modal",
+      callback_id: v.callback_id,
+      title: v.title,
+      ...(v.submit ? { submit: v.submit } : {}),
+      ...(v.close ? { close: v.close } : {}),
+      private_metadata: JSON.stringify(meta),
+      blocks: v.blocks,
+    };
+    await client.views.update({ view_id: v.id, hash: v.hash, view }).catch((err) => {
+      if (err?.data?.error === "hash_conflict") return client.views.update({ view_id: v.id, view });
+      throw err;
+    });
+  } catch (err) {
+    logger.error("remembering entry project failed", err);
+  }
+});
+
 app.action("lt_add", async ({ ack, body, client, logger }) => {
   await ack();
   await refreshLogTimeView({ body, client, logger }, (meta, prev) => {
@@ -1122,8 +1158,7 @@ app.options("lt_task", async ({ ack, body }) => {
   try {
     const meta = JSON.parse(body.view?.private_metadata || "{}");
     const entryIndex = Number(String(body.block_id ?? "").match(/^e(\d+)_/)?.[1] ?? 0) - 1;
-    const picked = Number(body.view?.state?.values?.[`e${entryIndex + 1}_project`]?.value?.selected_option?.value);
-    const projectId = picked || meta.entries?.[entryIndex]?.projectId || null;
+    const projectId = Number(meta.projects?.[entryIndex + 1]) || meta.entries?.[entryIndex]?.projectId || null;
     const query = String(body.value ?? "").trim();
     if (!projectId) {
       await ack({ options: [option("Choose a project first", "none")] });
@@ -1595,7 +1630,11 @@ app.action("eod_review", async ({ ack, body, action, client }) => {
       callbackId: "eod_log",
       submit: "Log time",
       blocks,
-      privateMetadata: JSON.stringify({ reviewId: review.id, entries: review.items.map((i) => ({ projectId: i.projectId })) }),
+      privateMetadata: JSON.stringify({
+        reviewId: review.id,
+        entries: review.items.map((i) => ({ projectId: i.projectId })),
+        projects: Object.fromEntries(review.items.map((i, index) => [index + 1, i.projectId])),
+      }),
     };
   });
 });
