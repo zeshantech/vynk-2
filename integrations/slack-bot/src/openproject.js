@@ -155,6 +155,17 @@ export class OpenProject {
     return data?._embedded?.elements ?? [];
   }
 
+  async taskPicker(userId, limit = 100) {
+    const data = await this.request(
+      "GET",
+      `/api/v3/work_packages?pageSize=${limit}&select=total,elements/id,elements/subject&sortBy=${encodeURIComponent('[["updatedAt","desc"]]')}&filters=${filters([
+        { assignee: { operator: "=", values: [String(userId)] } },
+        { status: { operator: "o", values: [] } },
+      ])}`,
+    );
+    return data?._embedded?.elements ?? [];
+  }
+
   // ---------- time ----------
   async logTime({ userId, workPackageId, hours, spentOn, comment }) {
     const body = {

@@ -26,7 +26,11 @@ class UserFacingError extends Error {}
 
 const wpUrl = (id) => `${BASE_URL}/work_packages/${id}`;
 const projectUrl = (p) => `${BASE_URL}/projects/${p.identifier}`;
-const escape = (text) => String(text ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const escape = (text) =>
+  String(text ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 
 const slackEmailCache = new Map();
 async function slackEmail(client, slackUserId) {
@@ -64,7 +68,8 @@ function command(name, handler) {
     await ack();
     try {
       const reply = await handler({ cmd, client, text: cmd.text?.trim() ?? "" });
-      if (reply) await respond(typeof reply === "string" ? { response_type: "ephemeral", text: reply } : { response_type: "ephemeral", ...reply });
+      if (reply)
+        await respond(typeof reply === "string" ? { response_type: "ephemeral", text: reply } : { response_type: "ephemeral", ...reply });
     } catch (err) {
       if (!(err instanceof UserFacingError)) logger.error(`${name} failed`, err);
       await respond({ response_type: "ephemeral", text: errorText(err) });
@@ -85,7 +90,6 @@ const HELP = [
   "`/create-project Website Redesign` — create a project _(admin)_",
   "`/team-hours` — everyone's hours this week _(admin, `last` for last week)_",
 ].join("\n");
-
 
 // ---------- projects ----------
 
@@ -108,7 +112,10 @@ command("/create-project", async ({ cmd, client, text }) => {
   const admin = await requireAdmin(client, cmd.user_id);
   if (!text) return "Usage: `/create-project Project name`";
   const project = await createProjectFor(admin, text);
-  return { response_type: "in_channel", text: `:white_check_mark: Project <${projectUrl(project)}|${escape(project.name)}> created by <@${cmd.user_id}>.` };
+  return {
+    response_type: "in_channel",
+    text: `:white_check_mark: Project <${projectUrl(project)}|${escape(project.name)}> created by <@${cmd.user_id}>.`,
+  };
 });
 
 app.view("create_project", async ({ ack, body, view, client, logger }) => {
@@ -161,36 +168,71 @@ const input = (blockId, label, element, optional = false) => ({
   element: { action_id: "value", ...element },
 });
 
-async function openCreateTaskModal(client, triggerId, slackUserId, subject) {
-  const options = await projectOptions();
-  if (!options.length) throw new UserFacingError("There are no projects yet.");
-  await client.views.open({
+// Slack's trigger_id expires after 3s, so open a loading form first and fill it in once Vynk answers.
+async function openForm(client, triggerId, title, build) {
+  const shell = { type: "modal", title: { type: "plain_text", text: title }, close: { type: "plain_text", text: "Cancel" } };
+  const { view } = await client.views.open({
     trigger_id: triggerId,
-    view: {
-      type: "modal",
-      callback_id: "create_task",
-      title: { type: "plain_text", text: "New task" },
-      submit: { type: "plain_text", text: "Create" },
+    view: { ...shell, blocks: [{ type: "section", text: { type: "mrkdwn", text: ":hourglass_flowing_sand: Loading…" } }] },
+  });
+  try {
+    const { callbackId, submit, blocks } = await build();
+    await client.views.update({
+      view_id: view.id,
+      hash: view.hash,
+      view: { ...shell, callback_id: callbackId, submit: { type: "plain_text", text: submit }, blocks },
+    });
+  } catch (err) {
+    if (!(err instanceof UserFacingError)) app.logger.error(`${title} form failed`, err);
+    await client.views.update({
+      view_id: view.id,
+      view: {
+        ...shell,
+        close: { type: "plain_text", text: "Close" },
+        blocks: [{ type: "section", text: { type: "mrkdwn", text: errorText(err) } }],
+      },
+    });
+  }
+}
+
+function openCreateTaskModal(client, triggerId, slackUserId, subject) {
+  return openForm(client, triggerId, "New task", async () => {
+    await vynkUser(client, slackUserId);
+    const options = await projectOptions();
+    if (!options.length) throw new UserFacingError("There are no projects yet.");
+    return {
+      callbackId: "create_task",
+      submit: "Create",
       blocks: [
         input("project", "Project", { type: "static_select", options }),
         input("subject", "Title", { type: "plain_text_input", ...(subject ? { initial_value: subject } : {}) }),
         input("description", "Description", { type: "plain_text_input", multiline: true }, true),
         input("assignee", "Assignee", { type: "users_select", initial_user: slackUserId }, true),
       ],
-    },
+    };
+  });
+}
+
+function openCreateProjectModal(client, triggerId, slackUserId) {
+  return openForm(client, triggerId, "New project", async () => {
+    await requireAdmin(client, slackUserId);
+    return { callbackId: "create_project", submit: "Create", blocks: [input("name", "Project name", { type: "plain_text_input" })] };
   });
 }
 
 app.command("/create-task", async ({ ack, command: cmd, client, respond, logger }) => {
   await ack();
   try {
-    const user = await vynkUser(client, cmd.user_id);
     const { project: projectName, subject } = parseCreateTask(cmd.text);
     if (projectName && subject) {
+      const user = await vynkUser(client, cmd.user_id);
       const project = await op.findProject(projectName);
       if (!project) throw new UserFacingError(`No project matches *${escape(projectName)}*. Try \`/projects\`.`);
       const wp = await op.createTask({ projectId: project.id, subject, assigneeId: user.id });
-      await respond({ response_type: "ephemeral", text: `:white_check_mark: Created <${wpUrl(wp.id)}|#${wp.id} ${escape(wp.subject)}> in ${escape(project.name)}.${unassignedNote(wp)}` });
+      await respond({
+        response_type: "ephemeral",
+        text: `:white_check_mark: Created <${wpUrl(wp.id)}|#${wp.id} ${escape(wp.subject)}> in ${escape(project.name)}.${unassignedNote(wp)}`,
+      });
       return;
     }
     await openCreateTaskModal(client, cmd.trigger_id, cmd.user_id, subject);
@@ -216,7 +258,9 @@ app.view("create_task", async ({ ack, body, view, client, logger }) => {
     const projectId = Number(values.project.value.selected_option.value);
     const wp = await op.createTask({ projectId, subject, assigneeId: assignee?.id, description: values.description.value.value });
     const who = assignee ? ` for <@${assigneeSlack}>` : "";
-    await dm(`:white_check_mark: Created <${wpUrl(wp.id)}|#${wp.id} ${escape(wp.subject)}>${wp.assigneeSkipped ? "" : who}.${unassignedNote(wp)}`);
+    await dm(
+      `:white_check_mark: Created <${wpUrl(wp.id)}|#${wp.id} ${escape(wp.subject)}>${wp.assigneeSkipped ? "" : who}.${unassignedNote(wp)}`,
+    );
   } catch (err) {
     if (!(err instanceof UserFacingError)) logger.error("create_task submit failed", err);
     await dm(errorText(err));
@@ -231,7 +275,10 @@ async function logTimeFor(user, { hours, workPackageId, spentOn, comment }) {
     throw err;
   });
   await op.logTime({ userId: user.id, workPackageId, hours, spentOn, comment }).catch((err) => {
-    if (err.status === 403) throw new UserFacingError(`You can't log time on #${workPackageId}: you're not a member of its project (or time tracking is off there).`);
+    if (err.status === 403)
+      throw new UserFacingError(
+        `You can't log time on #${workPackageId}: you're not a member of its project (or time tracking is off there).`,
+      );
     throw err;
   });
   const week = weekContaining(spentOn);
@@ -241,59 +288,58 @@ async function logTimeFor(user, { hours, workPackageId, spentOn, comment }) {
   return `:stopwatch: Logged *${formatHours(hours)}* on <${wpUrl(wp.id)}|#${wp.id} ${escape(wp.subject)}> for ${spentOn}. ${weekLabel}: *${formatHours(total)}*.`;
 }
 
-async function openLogTimeModal(client, triggerId, user, prefill = {}) {
-  const [tasks, projects] = await Promise.all([op.openTasksFor(user.id, 100), projectOptions()]);
-  const taskOptions = tasks.map((wp) => ({
-    text: { type: "plain_text", text: `#${wp.id} ${wp.subject}`.slice(0, 75) },
-    value: String(wp.id),
-  }));
-  const blocks = [];
-  if (taskOptions.length) {
-    blocks.push(input("task", "Task", { type: "static_select", options: taskOptions }, true));
-  }
-  blocks.push(
-    input("task_id", taskOptions.length ? "…or task ID" : "Task ID", {
-      type: "plain_text_input",
-      placeholder: { type: "plain_text", text: "123" },
-      ...(prefill.workPackageId ? { initial_value: String(prefill.workPackageId) } : {}),
-    }, true),
-    ...(projects.length
-      ? [
-          { type: "context", elements: [{ type: "mrkdwn", text: "*Or create a new task* and log the time on it" }] },
-          input("new_task", "New task title", { type: "plain_text_input" }, true),
-          input("new_project", "Project for the new task", { type: "static_select", options: projects }, true),
-          { type: "divider" },
-        ]
-      : []),
-    input("hours", "Time spent", {
-      type: "plain_text_input",
-      placeholder: { type: "plain_text", text: "1.5 or 1h30m" },
-      ...(prefill.hours ? { initial_value: String(prefill.hours) } : {}),
-    }),
-    input("date", "Date", { type: "datepicker", initial_date: todayIn(TZ) }),
-    input("comment", "Comment", { type: "plain_text_input", ...(prefill.comment ? { initial_value: prefill.comment } : {}) }, true),
-  );
-  await client.views.open({
-    trigger_id: triggerId,
-    view: {
-      type: "modal",
-      callback_id: "log_time",
-      title: { type: "plain_text", text: "Log time" },
-      submit: { type: "plain_text", text: "Log" },
-      blocks,
-    },
+function openLogTimeModal(client, triggerId, slackUserId, prefill = {}) {
+  return openForm(client, triggerId, "Log time", async () => {
+    const user = await vynkUser(client, slackUserId);
+    const [tasks, projects] = await Promise.all([op.taskPicker(user.id), projectOptions()]);
+    const taskOptions = tasks.map((wp) => ({
+      text: { type: "plain_text", text: `#${wp.id} ${wp.subject}`.slice(0, 75) },
+      value: String(wp.id),
+    }));
+    const blocks = [];
+    if (taskOptions.length) {
+      blocks.push(input("task", "Task", { type: "static_select", options: taskOptions }, true));
+    }
+    blocks.push(
+      input(
+        "task_id",
+        taskOptions.length ? "…or task ID" : "Task ID",
+        {
+          type: "plain_text_input",
+          placeholder: { type: "plain_text", text: "123" },
+          ...(prefill.workPackageId ? { initial_value: String(prefill.workPackageId) } : {}),
+        },
+        true,
+      ),
+      ...(projects.length
+        ? [
+            { type: "context", elements: [{ type: "mrkdwn", text: "*Or create a new task* and log the time on it" }] },
+            input("new_task", "New task title", { type: "plain_text_input" }, true),
+            input("new_project", "Project for the new task", { type: "static_select", options: projects }, true),
+            { type: "divider" },
+          ]
+        : []),
+      input("hours", "Time spent", {
+        type: "plain_text_input",
+        placeholder: { type: "plain_text", text: "1.5 or 1h30m" },
+        ...(prefill.hours ? { initial_value: String(prefill.hours) } : {}),
+      }),
+      input("date", "Date", { type: "datepicker", initial_date: todayIn(TZ) }),
+      input("comment", "Comment", { type: "plain_text_input", ...(prefill.comment ? { initial_value: prefill.comment } : {}) }, true),
+    );
+    return { callbackId: "log_time", submit: "Log", blocks };
   });
 }
 
 app.command("/log-time", async ({ ack, command: cmd, client, respond, logger }) => {
   await ack();
   try {
-    const user = await vynkUser(client, cmd.user_id);
     const parsed = parseLogTime(cmd.text);
     if (parsed.hours === null || parsed.workPackageId === null) {
-      await openLogTimeModal(client, cmd.trigger_id, user, parsed);
+      await openLogTimeModal(client, cmd.trigger_id, cmd.user_id, parsed);
       return;
     }
+    const user = await vynkUser(client, cmd.user_id);
     const spentOn = resolveDate(parsed.date, TZ);
     if (!spentOn) throw new UserFacingError("Date must be `today`, `yesterday` or `YYYY-MM-DD`.");
     const text = await logTimeFor(user, { ...parsed, spentOn });
@@ -332,12 +378,14 @@ app.view("log_time", async ({ ack, body, view, client, logger }) => {
       targetId = wp.id;
       created = `:white_check_mark: Created <${wpUrl(wp.id)}|#${wp.id} ${escape(wp.subject)}>.\n`;
     }
-    const text = created + await logTimeFor(user, {
-      hours,
-      workPackageId: targetId,
-      spentOn: values.date.value.selected_date,
-      comment: values.comment.value.value ?? "",
-    });
+    const text =
+      created +
+      (await logTimeFor(user, {
+        hours,
+        workPackageId: targetId,
+        spentOn: values.date.value.selected_date,
+        comment: values.comment.value.value ?? "",
+      }));
     await dm(text);
   } catch (err) {
     if (!(err instanceof UserFacingError)) logger.error("log_time submit failed", err);
@@ -434,11 +482,22 @@ const menuMessage = (slackUserId) => ({
   ],
 });
 
-command("/vynk", async ({ cmd }) => ({ ...menuMessage(cmd.user_id), blocks: [...menuMessage(cmd.user_id).blocks, { type: "context", elements: [{ type: "mrkdwn", text: HELP.split("\n").slice(1).join("  ·  ") }] }] }));
+command("/vynk", async ({ cmd }) => ({
+  ...menuMessage(cmd.user_id),
+  blocks: [
+    ...menuMessage(cmd.user_id).blocks,
+    { type: "context", elements: [{ type: "mrkdwn", text: HELP.split("\n").slice(1).join("  ·  ") }] },
+  ],
+}));
 
 app.event("app_mention", async ({ event, client, logger }) => {
   try {
-    await client.chat.postEphemeral({ channel: event.channel, user: event.user, ...(event.thread_ts ? { thread_ts: event.thread_ts } : {}), ...menuMessage(event.user) });
+    await client.chat.postEphemeral({
+      channel: event.channel,
+      user: event.user,
+      ...(event.thread_ts ? { thread_ts: event.thread_ts } : {}),
+      ...menuMessage(event.user),
+    });
   } catch (err) {
     logger.error("app_mention failed", err);
   }
@@ -461,24 +520,13 @@ app.action("vynk_menu", async ({ ack, body, action, client, respond, logger }) =
   try {
     switch (action.selected_option.value) {
       case "log_time":
-        await openLogTimeModal(client, body.trigger_id, await vynkUser(client, userId));
+        await openLogTimeModal(client, body.trigger_id, userId);
         break;
       case "create_task":
-        await vynkUser(client, userId);
         await openCreateTaskModal(client, body.trigger_id, userId);
         break;
       case "create_project":
-        await requireAdmin(client, userId);
-        await client.views.open({
-          trigger_id: body.trigger_id,
-          view: {
-            type: "modal",
-            callback_id: "create_project",
-            title: { type: "plain_text", text: "New project" },
-            submit: { type: "plain_text", text: "Create" },
-            blocks: [input("name", "Project name", { type: "plain_text_input" })],
-          },
-        });
+        await openCreateProjectModal(client, body.trigger_id, userId);
         break;
       case "week_hours":
         await reply(await weekHours({ cmd, client, text: "" }));
