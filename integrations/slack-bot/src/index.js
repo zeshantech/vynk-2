@@ -1,8 +1,8 @@
 import bolt from "@slack/bolt";
 import { OpenProject, OpenProjectError } from "./openproject.js";
 import { parseCreateTask, parseLogTime } from "./commands.js";
-import { currentWeek, formatHours, parseHours, resolveDate, todayIn, weekContaining } from "./time.js";
-import { loggedView, menuView, projectsView, tasksView, teamView, weekView } from "./views.js";
+import { MAX_HOURS_PER_DAY, MAX_HOURS_PER_ENTRY, currentWeek, formatHours, hoursError, parseHours, resolveDate, todayIn, weekContaining } from "./time.js";
+import { loggedView, menuView, prettyDate, projectsView, tasksView, teamView, weekView } from "./views.js";
 
 const { App, LogLevel } = bolt;
 
@@ -269,12 +269,18 @@ async function logTimeFor(user, { hours, workPackageId, spentOn, comment, activi
     if (err.status === 404) throw new UserFacingError("That task doesn't exist anymore.");
     throw err;
   });
+  const week = weekContaining(spentOn);
+  const before = await op.timeEntries({ from: week.from, to: week.to, userId: user.id });
+  const dayTotal = before.filter((e) => e.spentOn === spentOn).reduce((sum, e) => sum + e.hours, 0);
+  if (dayTotal + hours > MAX_HOURS_PER_DAY + 1e-9) {
+    throw new UserFacingError(
+      `That would make ${formatHours(dayTotal + hours)} on ${prettyDate(spentOn)}. You can log at most ${MAX_HOURS_PER_DAY}h a day (already ${formatHours(dayTotal)}).`,
+    );
+  }
   const entry = await op.logTime({ userId: user.id, workPackageId, hours, spentOn, comment, activityId }).catch((err) => {
     if (err.status === 403) throw new UserFacingError("You can't log time here: you're not a member of this project.");
     throw err;
   });
-  const week = weekContaining(spentOn);
-  const entries = await op.timeEntries({ from: week.from, to: week.to, userId: user.id });
   return loggedView({
     hours,
     wp,
@@ -282,7 +288,7 @@ async function logTimeFor(user, { hours, workPackageId, spentOn, comment, activi
     activityName: entry?._links?.activity?.title,
     spentOn,
     weekLabel: week.from === currentWeek(TZ).from ? "This week" : `Week of ${prettyWeek(week)}`,
-    weekTotal: entries.reduce((sum, e) => sum + e.hours, 0),
+    weekTotal: before.reduce((sum, e) => sum + e.hours, 0) + hours,
     created,
     urls,
   });
@@ -377,11 +383,14 @@ function logTimeView({ projects, projectId, tasks, activities }, meta, prefill =
 
   blocks.push(
     { type: "divider" },
-    input("hours", "Time spent", {
-      type: "plain_text_input",
-      placeholder: plain("e.g. 2h, 1h30m or 1.5"),
-      ...(prefill.hours ? { initial_value: String(prefill.hours) } : {}),
-    }),
+    {
+      ...input("hours", "Time spent", {
+        type: "plain_text_input",
+        placeholder: plain("e.g. 2h, 1h30m or 1.5"),
+        ...(prefill.hours ? { initial_value: String(prefill.hours) } : {}),
+      }),
+      hint: plain(`Up to ${MAX_HOURS_PER_ENTRY}h per entry and per day`),
+    },
     input("date", "Date", { type: "datepicker", initial_date: todayIn(TZ) }),
     input(
       "comment",
@@ -445,6 +454,7 @@ app.command("/log-time", async ({ ack, command: cmd, client, respond, logger }) 
       await openLogTimeModal(client, cmd.trigger_id, cmd.user_id, parsed);
       return;
     }
+    if (parsed.hours > MAX_HOURS_PER_ENTRY) throw new UserFacingError(`Maximum is ${MAX_HOURS_PER_ENTRY}h per entry.`);
     const user = await vynkUser(client, cmd.user_id);
     const spentOn = resolveDate(parsed.date, TZ);
     if (!spentOn) throw new UserFacingError("Date must be `today`, `yesterday` or `YYYY-MM-DD`.");
@@ -464,6 +474,7 @@ app.view("log_time", async ({ ack, body, view, client, logger }) => {
   const values = view.state.values;
   const meta = JSON.parse(view.private_metadata || "{}");
   const hours = parseHours(values.hours?.value.value);
+  const durationError = hoursError(values.hours?.value.value);
   const taskTitle = values.task_title?.value.value?.trim();
   const pickedId = Number(values.task_pick?.value.selected_option?.value);
   const subtask = values.subtask?.value.value?.trim();
@@ -472,7 +483,7 @@ app.view("log_time", async ({ ack, body, view, client, logger }) => {
   if (!meta.projectId) errors.project = "Choose a project";
   else if (meta.mode === "existing" && !pickedId) errors.task_pick = "Choose a task";
   else if (meta.mode !== "existing" && !taskTitle) errors.task_title = "Name the task";
-  if (!hours) errors.hours = "Use something like 2h, 1h30m or 1.5";
+  if (durationError) errors.hours = durationError;
   if (Object.keys(errors).length) {
     await ack({ response_action: "errors", errors });
     return;

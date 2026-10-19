@@ -1,19 +1,35 @@
 // Pure helpers for durations and dates (no I/O), so they're easy to test.
 
-const UNIT_PATTERN = /^(?:(\d+(?:\.\d+)?)h)?\s*(?:(\d+)m)?$/i;
+export const MAX_HOURS_PER_ENTRY = 24;
+export const MAX_HOURS_PER_DAY = 24;
 
-/** "2h", "1.5", "1h30m", "90m" -> hours as a number; null when it can't be parsed. */
+// 2 | 1.5 | 2h | 1.5h | 45m | 1h30m | 1h 30m | 1:30
+const DURATION_PATTERN =
+  /^(?:(\d{1,2}(?:[.,]\d{1,2})?)\s*(?:h|hr|hrs|hours?)?|(\d{1,2})\s*(?:h|hr|hrs)\s*(\d{1,2})\s*(?:m|min|mins)?|(\d{1,4})\s*(?:m|min|mins|minutes?)|(\d{1,2}):([0-5]\d))$/i;
+
+/** Duration text -> hours (number), or null when the format is not recognised. */
 export function parseHours(input) {
-  const text = String(input ?? "")
+  const match = String(input ?? "")
     .trim()
-    .toLowerCase()
-    .replace(/\s+/g, "");
-  if (!text) return null;
-  if (/^\d+(\.\d+)?$/.test(text)) return Number(text) > 0 ? Number(text) : null;
-  const match = text.match(UNIT_PATTERN);
-  if (!match || (!match[1] && !match[2])) return null;
-  const hours = Number(match[1] ?? 0) + Number(match[2] ?? 0) / 60;
+    .match(DURATION_PATTERN);
+  if (!match) return null;
+  const [, decimal, h, m, minutesOnly, clockH, clockM] = match;
+  if (m !== undefined && Number(m) > 59) return null;
+  let hours;
+  if (decimal !== undefined) hours = Number(decimal.replace(",", "."));
+  else if (h !== undefined) hours = Number(h) + Number(m) / 60;
+  else if (minutesOnly !== undefined) hours = Number(minutesOnly) / 60;
+  else hours = Number(clockH) + Number(clockM) / 60;
   return hours > 0 ? Math.round(hours * 100) / 100 : null;
+}
+
+/** Why a duration is not allowed, or null when it is fine. */
+export function hoursError(input) {
+  const hours = parseHours(input);
+  if (hours === null) return "Use a duration like 2h, 1h30m, 45m or 1.5";
+  if (hours < 1 / 60) return "Minimum is 1 minute";
+  if (hours > MAX_HOURS_PER_ENTRY) return `Maximum is ${MAX_HOURS_PER_ENTRY}h per entry`;
+  return null;
 }
 
 /** 2.5 -> "PT2H30M" (ISO 8601 duration that OpenProject expects). */

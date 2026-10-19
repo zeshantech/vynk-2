@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseCreateTask, parseLogTime } from "../src/commands.js";
-import { currentWeek, formatHours, fromIsoDuration, parseHours, resolveDate, toIsoDuration } from "../src/time.js";
+import { currentWeek, formatHours, fromIsoDuration, hoursError, parseHours, resolveDate, toIsoDuration } from "../src/time.js";
 
 test("parseHours", () => {
   assert.equal(parseHours("2h"), 2);
@@ -11,6 +11,26 @@ test("parseHours", () => {
   assert.equal(parseHours("abc"), null);
   assert.equal(parseHours("0"), null);
   assert.equal(parseHours(""), null);
+  assert.equal(parseHours("1h 30m"), 1.5);
+  assert.equal(parseHours("1:30"), 1.5);
+  assert.equal(parseHours("1,5"), 1.5);
+  assert.equal(parseHours("2 hours"), 2);
+  assert.equal(parseHours("1h90m"), null);
+  assert.equal(parseHours("1:75"), null);
+  assert.equal(parseHours("2h-1"), null);
+  assert.equal(parseHours("-2"), null);
+  assert.equal(parseHours("1e3"), null);
+  assert.equal(parseHours("25h"), 25);
+});
+
+test("hoursError", () => {
+  assert.equal(hoursError("8h"), null);
+  assert.equal(hoursError("24"), null);
+  assert.match(hoursError("24h1m"), /Maximum is 24h/);
+  assert.match(hoursError("25"), /Maximum is 24h/);
+  assert.match(hoursError("1500m"), /Maximum is 24h/);
+  assert.match(hoursError("abc"), /Use a duration/);
+  assert.match(hoursError("0"), /Use a duration/);
 });
 
 test("iso durations", () => {

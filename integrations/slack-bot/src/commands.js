@@ -24,7 +24,7 @@ export function parseLogTime(text) {
     const isTaskId =
       workPackageId === null && (/^#\d+$/.test(token) || (bareNumber && index < 2 && (hours !== null || Number(token) > 24)));
     if (isTaskId) workPackageId = Number(token.replace("#", ""));
-    else if (hours === null && index < 2 && parseHours(token) !== null) hours = parseHours(token);
+    else if (hours === null && index < 2 && /^\d/.test(token) && parseHours(token) !== null) hours = parseHours(token);
     else if (date === null && DATE_WORD.test(token)) date = token.toLowerCase();
     else rest.push(token);
   });
