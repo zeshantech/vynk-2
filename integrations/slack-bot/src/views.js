@@ -257,20 +257,17 @@ export function teamView({ label, week, users, entries }) {
   return withTable(`Team hours: ${formatHours(total)}`, before, rows.slice(0, 100), [null, null, "right"], after);
 }
 
-export function menuView(options) {
+export function menuView(options, adminOptions = []) {
+  const buttons = (list, primaryFirst) =>
+    list.map(([value, label], i) => button(label, `menu_${value}`, value, primaryFirst && i === 0 ? "primary" : undefined));
   return {
     text: "What would you like to do?",
     blocks: [
-      {
-        type: "section",
-        text: md("*Vynk*\nWhat would you like to do?"),
-        accessory: {
-          type: "static_select",
-          action_id: "vynk_menu",
-          placeholder: plain("Choose an action"),
-          options: options.map(([value, label]) => ({ text: plain(label), value })),
-        },
-      },
+      { type: "section", text: md("*Vynk*\nWhat would you like to do?") },
+      { type: "actions", block_id: "menu", elements: buttons(options, true) },
+      ...(adminOptions.length
+        ? [context("Admin"), { type: "actions", block_id: "menu_admin", elements: buttons(adminOptions, false) }]
+        : []),
     ],
   };
 }

@@ -655,13 +655,18 @@ const MENU = [
   ["my_tasks", "My tasks"],
   ["projects", "Projects"],
   ["create_task", "New task"],
-  ["create_project", "New project  ·  admin"],
-  ["team_hours", "Team hours  ·  admin"],
+];
+const ADMIN_MENU = [
+  ["create_project", "New project"],
+  ["team_hours", "Team hours"],
 ];
 
-const menuMessage = () => menuView(MENU);
+async function menuMessage(client, slackUserId) {
+  const user = await vynkUser(client, slackUserId).catch(() => null);
+  return menuView(MENU, user?.admin ? ADMIN_MENU : []);
+}
 
-command("/vynk", async () => menuMessage());
+command("/vynk", async ({ cmd, client }) => menuMessage(client, cmd.user_id));
 
 app.event("app_mention", async ({ event, client, logger }) => {
   try {
@@ -669,30 +674,30 @@ app.event("app_mention", async ({ event, client, logger }) => {
       channel: event.channel,
       user: event.user,
       ...(event.thread_ts ? { thread_ts: event.thread_ts } : {}),
-      ...menuMessage(),
+      ...(await menuMessage(client, event.user)),
     });
   } catch (err) {
     logger.error("app_mention failed", err);
   }
 });
 
-app.message(async ({ message, say, logger }) => {
+app.message(async ({ message, say, client, logger }) => {
   if (message.channel_type !== "im" || message.subtype || message.bot_id) return;
   try {
-    await say(menuMessage());
+    await say(await menuMessage(client, message.user));
   } catch (err) {
     logger.error("dm menu failed", err);
   }
 });
 
-app.action("vynk_menu", async ({ ack, body, action, client, respond, logger }) => {
+app.action(/^(vynk_menu|menu_.+)$/, async ({ ack, body, action, client, respond, logger }) => {
   await ack();
   const userId = body.user.id;
   const cmd = { user_id: userId };
   const reply = (r) =>
     deliver(respond, { response_type: "ephemeral", replace_original: false, ...(typeof r === "string" ? { text: r } : r) });
   try {
-    switch (action.selected_option.value) {
+    switch (action.selected_option?.value ?? action.value) {
       case "log_time":
         await openLogTimeModal(client, body.trigger_id, userId);
         break;
