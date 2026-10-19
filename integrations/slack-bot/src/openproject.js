@@ -118,14 +118,35 @@ export class OpenProject {
     );
   }
 
-  async createProject(name) {
+  async createProject(name, { parentId } = {}) {
     const identifier = name
       .toLowerCase()
       .normalize("NFKD")
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "")
       .slice(0, 90);
-    return this.request("POST", "/api/v3/projects", { name, identifier: identifier || undefined, public: false });
+    return this.request("POST", "/api/v3/projects", {
+      name,
+      identifier: identifier || undefined,
+      public: false,
+      ...(parentId ? { _links: { parent: { href: `/api/v3/projects/${parentId}` } } } : {}),
+    });
+  }
+
+  updateProject(id, body) {
+    return this.request("PATCH", `/api/v3/projects/${id}`, body);
+  }
+
+  setParent(id, parentId) {
+    return this.updateProject(id, { _links: { parent: { href: parentId ? `/api/v3/projects/${parentId}` : null } } });
+  }
+
+  /** Key of a "Client" project attribute if an admin created one (e.g. "customField3"), else null. */
+  async clientFieldKey() {
+    const schema = await this.request("GET", "/api/v3/projects/schema");
+    return (
+      Object.entries(schema ?? {}).find(([k, v]) => k.startsWith("customField") && /^client(\s*name)?$/i.test(v?.name ?? ""))?.[0] ?? null
+    );
   }
 
   async addMember({ projectId, userId, roleName = "Project admin" }) {

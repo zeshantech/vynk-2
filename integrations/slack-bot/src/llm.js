@@ -43,7 +43,10 @@ const RESULT_SCHEMA = {
 const SYSTEM = `You turn Slack end-of-day (EOD) reports into time-tracking items for a project management tool.
 Rules:
 - Only include work that was done. Skip plans for tomorrow, blockers, questions, greetings and meetings with no project unless they clearly belong to a project.
-- Map each item to a project from the list using names, identifiers, abbreviations, client names or context. If unsure, use null.
+- Map each item to a project from the list using project names, identifiers, abbreviations, the project's client and its parent company.
+  Example: "chris to debug its intelligence app" belongs to the project whose client is Chris and whose name mentions intelligence, not to another Chris project.
+  Work for a company in general (not a specific product) belongs to the parent company's own project.
+  If several projects fit equally, or none fits, use null.
 - Prefer an existing task when it is clearly the same work; otherwise null so a new task is created.
 - Do not invent hours. Only copy durations written in the message.
 - Keep titles short and clean (no bullets, emojis, links or durations).`;
@@ -66,7 +69,14 @@ export class EodReader {
   async read({ text, projects, tasks, today }) {
     const context = {
       today,
-      projects: projects.map((p) => ({ id: p.id, name: p.name, identifier: p.identifier, author_is_member: p.member })),
+      projects: projects.map((p) => ({
+        id: p.id,
+        name: p.name,
+        identifier: p.identifier,
+        parent_company: p.company ?? null,
+        client: p.client ?? null,
+        author_is_member: p.member,
+      })),
       open_tasks: tasks.map((t) => ({ id: t.id, project_id: t.projectId, title: t.subject })),
     };
     const completion = await this.client.chat.completions.create({

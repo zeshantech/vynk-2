@@ -200,14 +200,17 @@ function membersCell(list = []) {
   return shown.join(", ") + (sorted.length > 3 ? `  +${sorted.length - 3}` : "");
 }
 
-export function projectsView({ projects, mine, team, members = [], urls, showTeam }) {
+export function projectsView({ projects, mine, team, members = [], details = new Map(), urls, showTeam }) {
   const before = [header("Projects"), context(`${projects.length} project${projects.length === 1 ? "" : "s"}  ·  hours this week`)];
   if (!projects.length) return { text: "Projects", blocks: [...before, divider, { type: "section", text: md("No projects yet.") }] };
   const byProject = groupBy(members, (m) => m.projectId);
-  const rows = [[bold("Project"), bold("Members"), bold("You"), ...(showTeam ? [bold("Team")] : [])]];
+  const rows = [[bold("Project"), bold("Company"), bold("Client"), bold("Members"), bold("You"), ...(showTeam ? [bold("Team")] : [])]];
   for (const p of projects) {
+    const d = details.get(p.id) ?? {};
     rows.push([
       link(p.name, urls.project(p)),
+      d.company ?? "–",
+      d.client ?? "–",
       membersCell(byProject.get(p.id)),
       hoursOrDash(mine.get(p.id) ?? 0),
       ...(showTeam ? [hoursOrDash(team.get(p.id) ?? 0)] : []),
@@ -228,7 +231,7 @@ export function projectsView({ projects, mine, team, members = [], urls, showTea
             },
           ],
         };
-  return withTable("Projects", before, rows.slice(0, 100), [null, null, "right", "right"], [manage]);
+  return withTable("Projects", before, rows.slice(0, 100), [null, null, null, null, "right", "right"], [manage]);
 }
 
 function peopleSummary(result, role) {
@@ -243,7 +246,7 @@ function peopleSummary(result, role) {
   ];
 }
 
-export function projectCreatedView({ project, result, urls, inChannel = false, by = null }) {
+export function projectCreatedView({ project, result, urls, inChannel = false, by = null, details = null }) {
   return {
     ...(inChannel ? { response_type: "in_channel" } : {}),
     text: `Project ${project.name} created`,
@@ -252,17 +255,35 @@ export function projectCreatedView({ project, result, urls, inChannel = false, b
         type: "section",
         text: md(`:white_check_mark:  *Project <${urls.project(project)}|${escape(project.name)}> created*${by ? ` by <@${by}>` : ""}`),
       },
+      ...(details?.company || details?.client
+        ? [
+            context(
+              [details.company && `Company: *${escape(details.company)}*`, details.client && `Client: *${escape(details.client)}*`]
+                .filter(Boolean)
+                .join("  ·  "),
+            ),
+          ]
+        : []),
       ...peopleSummary(result),
       {
         type: "actions",
-        elements: [button(result ? "Manage members" : "Add people", `pm_manage_${project.id}`, String(project.id), "primary")],
+        elements: [button(result ? "Manage project" : "Add people", `pm_manage_${project.id}`, String(project.id), "primary")],
       },
     ],
   };
 }
 
-export function membersAddedView({ projectName, role, result }) {
+export function membersAddedView({ projectName, role, result, notes = [] }) {
   const changed = result.added.length + result.invited.length;
+  if (!changed && notes.length && !result.already.length && !result.skipped.length && !result.failed.length) {
+    return {
+      text: `${projectName} updated`,
+      blocks: [
+        { type: "section", text: md(`:white_check_mark:  *${escape(projectName)}* updated`) },
+        context(notes.map(escape).join("  ·  ")),
+      ],
+    };
+  }
   return {
     text: `${projectName}: ${changed} member${changed === 1 ? "" : "s"} added`,
     blocks: [
@@ -270,6 +291,7 @@ export function membersAddedView({ projectName, role, result }) {
         type: "section",
         text: md(`${changed ? ":white_check_mark:" : ":information_source:"}  *${escape(projectName)}*  ·  ${changed} added`),
       },
+      ...(notes.length ? [context(notes.map(escape).join("  ·  "))] : []),
       ...peopleSummary(result, role),
     ],
   };

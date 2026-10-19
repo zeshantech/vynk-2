@@ -197,16 +197,103 @@ async function projectsReply({ cmd, client }) {
     if (e.userId === user.id) mine.set(e.projectId, (mine.get(e.projectId) ?? 0) + e.hours);
   }
   const members = await user.api.memberships(projects.slice(0, 100).map((p) => p.id)).catch(() => []);
-  return projectsView({ projects, mine, team, members, urls, showTeam: Boolean(user.admin) });
+  const details = new Map();
+  for (const p of projects.slice(0, 100)) details.set(p.id, await projectDetails(p));
+  return projectsView({ projects, mine, team, members, details, urls, showTeam: Boolean(user.admin) });
 }
 
 command("/projects", projectsReply);
 
-async function createProjectFor(admin, name) {
-  const project = await admin.api.createProject(name);
+async function createProjectFor(admin, name, { parentId } = {}) {
+  const project = await admin.api.createProject(name, { parentId });
   await admin.api.addMember({ projectId: project.id, userId: admin.id }).catch(() => null);
+  cache.delete("projects:all");
+  cache.delete(`projects:${admin.id}`);
   return project;
 }
+
+const clientKey = () => cached("client-field", 10 * 60_000, () => op.clientFieldKey().catch(() => null));
+
+/** Parent company (the parent project in Vynk) and client name of a project. */
+async function projectDetails(project) {
+  const key = await clientKey();
+  const fromField = key ? project[key] : null;
+  return {
+    company: project._links?.parent?.title ?? null,
+    companyId: idFromLink(project._links?.parent),
+    client: (typeof fromField === "string" ? fromField : fromField?.raw) || store.data.clients?.[project.id] || null,
+  };
+}
+
+async function saveClient(api, projectId, client) {
+  const key = await clientKey();
+  const value = client?.trim() || null;
+  if (key) await api.updateProject(projectId, { [key]: value });
+  store.data.clients ??= {};
+  if (value) store.data.clients[projectId] = value;
+  else delete store.data.clients[projectId];
+  await store.save();
+}
+
+/** "p:<id>" = existing company, "new:<name>" = create it, "none" = no company. */
+async function resolveCompany(admin, value) {
+  if (!value || value === "none") return null;
+  if (value.startsWith("p:")) return Number(value.slice(2));
+  const name = value.slice(4).trim();
+  const all = await cached("projects:all", 5 * 60_000, () => op.projects());
+  const existing = all.find((p) => p.name.toLowerCase() === name.toLowerCase());
+  if (existing) return existing.id;
+  return (await createProjectFor(admin, name)).id;
+}
+
+function companyBlock(current) {
+  return {
+    type: "input",
+    block_id: "company",
+    optional: true,
+    label: plain("Parent company"),
+    hint: plain("Group products of the same company. Work for the company itself can be logged on it directly."),
+    element: {
+      type: "external_select",
+      action_id: "np_company",
+      min_query_length: 0,
+      placeholder: plain("Search or type a new company"),
+      ...(current ? { initial_option: current } : {}),
+    },
+  };
+}
+
+function clientBlock(current) {
+  return {
+    ...input(
+      "client",
+      "Client name",
+      { type: "plain_text_input", placeholder: plain("e.g. Chris"), ...(current ? { initial_value: current } : {}) },
+      true,
+    ),
+    hint: plain("Helps the bot match EOD work like \u201cchris intelligence app\u201d to this project."),
+  };
+}
+
+app.options("np_company", async ({ ack, body }) => {
+  try {
+    const query = String(body.value ?? "").trim();
+    const meta = JSON.parse(body.view?.private_metadata || "{}");
+    const all = await cached("projects:all", 5 * 60_000, () => op.projects());
+    const needle = query.toLowerCase();
+    const candidates = all.filter((p) => p.id !== meta.projectId && !idFromLink(p._links?.parent));
+    const options = candidates
+      .filter((p) => !needle || p.name.toLowerCase().includes(needle))
+      .slice(0, 97)
+      .map((p) => option(p.name, `p:${p.id}`));
+    if (query && !all.some((p) => p.name.toLowerCase() === needle)) options.unshift(option(`+ New company: ${query}`, `new:${query}`));
+    options.push(option("No parent company", "none"));
+    await ack({ options });
+  } catch (err) {
+    app.logger.error("company search failed", err);
+    await ack({ options: [] });
+  }
+});
 
 const roleOption = (r) => option(r.name, r.id);
 
@@ -297,12 +384,15 @@ app.view("create_project", async ({ ack, body, view, client, logger }) => {
   const dm = (msg) => client.chat.postMessage({ channel: body.user.id, ...(typeof msg === "string" ? { text: msg } : msg) });
   try {
     const admin = await requireAdmin(client, body.user.id);
-    const project = await createProjectFor(admin, name);
+    const parentId = await resolveCompany(admin, values.company?.np_company?.selected_option?.value);
+    const project = await createProjectFor(admin, name, { parentId });
+    const clientName = values.client?.value.value?.trim();
+    if (clientName) await saveClient(admin.api, project.id, clientName);
     const people = (values.people?.value.selected_users ?? []).filter((id) => id !== body.user.id);
     const roleId = Number(values.role?.value.selected_option?.value);
     const result =
       people.length && roleId ? await addPeople({ actor: admin, client, projectId: project.id, slackUserIds: people, roleId }) : null;
-    await dm(projectCreatedView({ project, result, urls }));
+    await dm(projectCreatedView({ project, result, urls, details: await projectDetails(project) }));
   } catch (err) {
     if (!(err instanceof UserFacingError)) logger.error("create_project submit failed", err);
     await dm(errorText(err));
@@ -310,25 +400,37 @@ app.view("create_project", async ({ ack, body, view, client, logger }) => {
 });
 
 function openMembersModal(client, triggerId, slackUserId, projectId) {
-  return openForm(client, triggerId, "Project members", async () => {
+  return openForm(client, triggerId, "Project", async () => {
     const user = await vynkUser(client, slackUserId);
     const projects = await cached(`projects:${user.id}`, 60_000, () => user.api.projectsFor(user));
     const project = projects.find((p) => p.id === projectId);
     if (!project) throw new UserFacingError("That project isn't available to you.");
     const [members, roleInfo, perms] = await Promise.all([user.api.memberships([projectId]), memberRoles(user), permissions(user)]);
     const canManage = allowed(perms.manageMembers, projectId);
+    const details = await projectDetails(project);
+    const canEdit = Boolean(user.admin);
     const list = members
       .sort((a, b) => a.name.localeCompare(b.name))
       .map((m) => `${escape(m.name)}  ·  _${escape(m.roles.join(", ") || "No role")}_`);
     return {
       callbackId: "pm_members",
-      submit: canManage ? "Add people" : null,
-      privateMetadata: JSON.stringify({ projectId, projectName: project.name }),
+      submit: canManage || canEdit ? "Save" : null,
+      privateMetadata: JSON.stringify({ projectId, projectName: project.name, details }),
       blocks: [
         {
           type: "section",
-          text: { type: "mrkdwn", text: `*${escape(project.name)}*\n${members.length} member${members.length === 1 ? "" : "s"}` },
+          text: {
+            type: "mrkdwn",
+            text: `*${escape(project.name)}*\n${[details.company && `Company: ${escape(details.company)}`, details.client && `Client: ${escape(details.client)}`, `${members.length} member${members.length === 1 ? "" : "s"}`].filter(Boolean).join("  ·  ")}`,
+          },
         },
+        ...(canEdit
+          ? [
+              companyBlock(details.companyId ? option(details.company, `p:${details.companyId}`) : null),
+              clientBlock(details.client),
+              { type: "divider" },
+            ]
+          : []),
         {
           type: "section",
           text: { type: "mrkdwn", text: (list.length ? list.slice(0, 40).join("\n") : "_No members yet_").slice(0, 2900) },
@@ -353,17 +455,43 @@ app.view("pm_members", async ({ ack, body, view, client, logger }) => {
   const values = view.state.values;
   const meta = JSON.parse(view.private_metadata || "{}");
   const people = values.people?.value.selected_users ?? [];
-  if (!people.length) {
-    await ack({ response_action: "errors", errors: { people: "Choose at least one person" } });
+  const companyValue = values.company?.np_company?.selected_option?.value ?? null;
+  const clientName = values.client ? (values.client.value.value ?? "").trim() : null;
+  const before = meta.details ?? {};
+  const companyChanged = values.company !== undefined && (companyValue ?? "none") !== (before.companyId ? `p:${before.companyId}` : "none");
+  const clientChanged = clientName !== null && clientName !== (before.client ?? "");
+  if (!people.length && !companyChanged && !clientChanged) {
+    await ack({ response_action: "errors", errors: values.people ? { people: "Choose people to add, or change the details above" } : {} });
     return;
   }
   await ack();
   const dm = (msg) => client.chat.postMessage({ channel: body.user.id, ...(typeof msg === "string" ? { text: msg } : msg) });
   try {
     const actor = await vynkUser(client, body.user.id);
-    const roleId = Number(values.role.value.selected_option.value);
-    const result = await addPeople({ actor, client, projectId: meta.projectId, slackUserIds: people, roleId });
-    await dm(membersAddedView({ projectName: meta.projectName, role: values.role.value.selected_option.text.text, result }));
+    const notes = [];
+    if (companyChanged || clientChanged) {
+      if (!actor.admin) throw new UserFacingError("Only Vynk admins can change the company or client.");
+      if (companyChanged) {
+        const parentId = await resolveCompany(actor, companyValue);
+        await actor.api.setParent(meta.projectId, parentId);
+        cache.delete("projects:all");
+        notes.push(parentId ? "Company updated" : "Company removed");
+      }
+      if (clientChanged) {
+        await saveClient(actor.api, meta.projectId, clientName);
+        notes.push(clientName ? `Client: ${clientName}` : "Client removed");
+      }
+    }
+    const result = people.length
+      ? await addPeople({
+          actor,
+          client,
+          projectId: meta.projectId,
+          slackUserIds: people,
+          roleId: Number(values.role.value.selected_option.value),
+        })
+      : { added: [], already: [], invited: [], skipped: [], failed: [] };
+    await dm(membersAddedView({ projectName: meta.projectName, role: values.role?.value.selected_option?.text.text, result, notes }));
   } catch (err) {
     if (!(err instanceof UserFacingError)) logger.error("pm_members submit failed", err);
     await dm(errorText(err));
@@ -454,7 +582,9 @@ function openCreateProjectModal(client, triggerId, slackUserId) {
       callbackId: "create_project",
       submit: "Create",
       blocks: [
-        input("name", "Project name", { type: "plain_text_input", placeholder: plain("e.g. Website Redesign") }),
+        input("name", "Project name", { type: "plain_text_input", placeholder: plain("e.g. Intelligence App") }),
+        companyBlock(),
+        clientBlock(),
         { type: "divider" },
         ...peopleBlocks(await memberRoles(admin)),
         {
@@ -1164,7 +1294,8 @@ async function handleEodMessage(message, client) {
 /** The LLM decides what the report contains; the rule-based parser is only a fallback. */
 async function readEod({ user, report, mine }) {
   const all = await cached("projects:all", 5 * 60_000, () => op.projects());
-  const projects = all.map((p) => ({ ...p, member: mine.has(p.id) }));
+  const projects = [];
+  for (const p of all) projects.push({ ...p, member: mine.has(p.id), ...(await projectDetails(p)) });
   for (const p of mine.values()) if (!projects.some((x) => x.id === p.id)) projects.push({ ...p, member: true });
   const today = dateOfTs(report.ts);
 
