@@ -38,6 +38,11 @@ services:
       REMINDER_DAY: ${REMINDER_DAY:-}
       REMINDER_TIME: ${REMINDER_TIME:-17:00}
       REMINDER_MIN_HOURS: ${REMINDER_MIN_HOURS:-40}
+      OPENPROJECT_OAUTH_CLIENT_ID: ${OPENPROJECT_OAUTH_CLIENT_ID:-}
+      OPENPROJECT_OAUTH_CLIENT_SECRET: ${OPENPROJECT_OAUTH_CLIENT_SECRET:-}
+      BOT_PUBLIC_URL: ${BOT_PUBLIC_URL:-https://${OPENPROJECT_HOST__NAME}}
+    volumes:
+      - slack_data:/data
 
 networks:
   shared_net:
@@ -45,3 +50,4 @@ networks:
 
 volumes:
   op_assets:
+  slack_data:

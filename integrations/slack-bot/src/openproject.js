@@ -1,4 +1,4 @@
-// Minimal OpenProject API v3 client used by the bot (service account API key).
+// Minimal OpenProject API v3 client: either the service account (API key) or a signed-in user (OAuth token).
 
 import { fromIsoDuration, toIsoDuration } from "./time.js";
 
@@ -13,19 +13,31 @@ export class OpenProjectError extends Error {
 const filters = (list) => encodeURIComponent(JSON.stringify(list));
 const idFromHref = (href) => (href ? Number(String(href).split("/").pop()) : null);
 
+export class NotSignedInError extends Error {}
+
 export class OpenProject {
-  constructor({ baseUrl, apiKey }) {
+  constructor({ baseUrl, apiKey, token }) {
     this.baseUrl = baseUrl.replace(/\/$/, "");
-    this.auth = `Basic ${Buffer.from(`apikey:${apiKey}`).toString("base64")}`;
+    this.apiKeyAuth = apiKey ? `Basic ${Buffer.from(`apikey:${apiKey}`).toString("base64")}` : null;
+    this.token = token;
     this.userCache = new Map();
   }
 
-  async request(method, path, body) {
+  async authHeader(force = false) {
+    if (this.apiKeyAuth) return this.apiKeyAuth;
+    const token = await this.token({ force });
+    if (!token) throw new NotSignedInError("Not signed in to Vynk");
+    return `Bearer ${token}`;
+  }
+
+  async request(method, path, body, retried = false) {
     const res = await fetch(`${this.baseUrl}${path}`, {
       method,
-      headers: { Authorization: this.auth, Accept: "application/hal+json", "Content-Type": "application/json" },
+      headers: { Authorization: await this.authHeader(retried), Accept: "application/hal+json", "Content-Type": "application/json" },
       body: body ? JSON.stringify(body) : undefined,
     });
+    if (res.status === 401 && this.token && !retried) return this.request(method, path, body, true);
+    if (res.status === 401 && this.token) throw new NotSignedInError("Vynk sign-in expired");
     const text = await res.text();
     let data = null;
     try {
@@ -38,6 +50,10 @@ export class OpenProject {
       throw new OpenProjectError(detail || data?.message || `${res.status} ${res.statusText}`, res.status, data);
     }
     return data;
+  }
+
+  me() {
+    return this.request("GET", "/api/v3/users/me");
   }
 
   url(path) {

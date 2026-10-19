@@ -257,7 +257,7 @@ export function teamView({ label, week, users, entries }) {
   return withTable(`Team hours: ${formatHours(total)}`, before, rows.slice(0, 100), [null, null, "right"], after);
 }
 
-export function menuView(options, adminOptions = []) {
+export function menuView(options, adminOptions = [], signedInAs = null) {
   const buttons = (list, primaryFirst) =>
     list.map(([value, label], i) => button(label, `menu_${value}`, value, primaryFirst && i === 0 ? "primary" : undefined));
   return {
@@ -268,6 +268,21 @@ export function menuView(options, adminOptions = []) {
       ...(adminOptions.length
         ? [context("Admin"), { type: "actions", block_id: "menu_admin", elements: buttons(adminOptions, false) }]
         : []),
+      ...(signedInAs ? [context(`Signed in as *${escape(signedInAs)}*  ·  \`/vynk disconnect\` to sign out`)] : []),
+    ],
+  };
+}
+
+export function connectView(url) {
+  return {
+    text: "Connect your Vynk account",
+    blocks: [
+      {
+        type: "section",
+        text: md("*Connect your Vynk account*\nSign in once so everything you do here is saved as you, with your own access."),
+      },
+      { type: "actions", elements: [{ ...button("Connect Vynk", "connect_vynk", "connect", "primary"), url }] },
+      context("The link works for 15 minutes. Use the same email as your Slack account."),
     ],
   };
 }
