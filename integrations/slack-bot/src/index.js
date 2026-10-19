@@ -868,8 +868,8 @@ async function loggableProjects(user) {
   };
 }
 
-async function logTimeData(user, projectId) {
-  const { projects, hidden, perms } = await loggableProjects(user);
+async function logTimeData(user) {
+  const { projects, hidden } = await loggableProjects(user);
   if (!projects.length) {
     throw new UserFacingError(
       hidden.length
@@ -877,10 +877,10 @@ async function logTimeData(user, projectId) {
         : "You're not a member of any project yet. Ask an admin to add you.",
     );
   }
-  const id = projects.some((p) => p.id === projectId) ? projectId : projects.length === 1 ? projects[0].id : null;
-  const activities = id ? await cached(`activities:${user.id}:${id}`, 300_000, () => user.api.activities(id)).catch(() => []) : [];
-  if (id) cached(`tasks:${user.id}:${id}`, 30_000, () => user.api.projectTasks(id)).catch(() => null);
-  return { projects, hidden, projectId: id, activities, canCreateTask: id ? allowed(perms.createTask, id) : true };
+  const activities = await cached(`activities:${user.id}:${projects[0].id}`, 300_000, () => user.api.activities(projects[0].id)).catch(
+    () => [],
+  );
+  return { projects, hidden, activities };
 }
 
 /** Current form values by block id, so they survive re-rendering the form. */
@@ -893,95 +893,168 @@ function formState(values = {}) {
   return out;
 }
 
-function logTimeView({ projects, hidden = [], projectId, activities, canCreateTask = true }, meta, prev = {}) {
-  const count = Math.min(Math.max(meta.count ?? 1, 1), MAX_ENTRIES);
-  const project = projects.find((p) => p.id === projectId);
-  const text = (id) => (prev[id]?.text ? { initial_value: prev[id].text } : {});
-  const blocks = [
+/** Inputs for one time entry; every entry has its own project, task, date, time and activity. */
+function entryBlocks(n, { projectOptions, activities, prev = {}, preset = {} }) {
+  const has = (opts, o) => o && opts.some((x) => x.value === o.value);
+  const project = prev[`e${n}_project`]?.option ?? preset.project;
+  const activity = prev[`e${n}_act`]?.option ?? preset.activity;
+  const date = prev[`e${n}_date`]?.date ?? preset.date;
+  const text = (id, fallback) => {
+    const value = prev[`e${n}_${id}`]?.text ?? fallback;
+    return value ? { initial_value: value } : {};
+  };
+  const task = prev[`e${n}_task`]?.option ?? preset.task;
+  return [
+    input(`e${n}_project`, "Project", {
+      type: "static_select",
+      placeholder: plain("Choose a project"),
+      options: projectOptions,
+      ...(has(projectOptions, project) ? { initial_option: project } : {}),
+    }),
     {
       type: "input",
-      block_id: "project",
-      dispatch_action: true,
-      label: plain("Project"),
+      block_id: `e${n}_task`,
+      label: plain("Task"),
+      hint: plain("Search the project's tasks, or type a name to create a new one"),
       element: {
-        type: "static_select",
-        action_id: "lt_project",
-        placeholder: plain("Choose a project"),
-        options: projects.slice(0, 100).map((p) => option(p.name, p.id)),
-        ...(project ? { initial_option: option(project.name, project.id) } : {}),
+        type: "external_select",
+        action_id: "lt_task",
+        min_query_length: 0,
+        placeholder: plain("Search or type a new task"),
+        ...(task ? { initial_option: task } : {}),
       },
     },
-    input("date", "Date", { type: "datepicker", initial_date: prev.date?.date ?? todayIn(TZ) }),
+    ...(preset.subtask === false
+      ? []
+      : [
+          input(
+            `e${n}_sub`,
+            "Subtask",
+            { type: "plain_text_input", placeholder: plain("Optional: a smaller step under this task"), ...text("sub") },
+            true,
+          ),
+        ]),
+    input(`e${n}_date`, "Date", { type: "datepicker", placeholder: plain("When did you do it?"), ...(date ? { initial_date: date } : {}) }),
+    {
+      ...input(
+        `e${n}_hours`,
+        "Time spent",
+        { type: "plain_text_input", placeholder: plain("e.g. 2h, 1h30m or 1.5"), ...text("hours", preset.hours) },
+        Boolean(preset.optionalHours),
+      ),
+      hint: plain(preset.optionalHours ? "Leave empty to skip this item" : `Up to ${MAX_HOURS_PER_ENTRY}h per entry and per day`),
+    },
+    ...(activities.length
+      ? [
+          input(
+            `e${n}_act`,
+            "Activity",
+            {
+              type: "static_select",
+              placeholder: plain("What kind of work?"),
+              options: activities.map((a) => option(a.name, a.id)),
+              ...(has(
+                activities.map((a) => option(a.name, a.id)),
+                activity,
+              )
+                ? { initial_option: activity }
+                : {}),
+            },
+            Boolean(preset.optionalHours),
+          ),
+        ]
+      : []),
+    ...(preset.notes === false
+      ? []
+      : [input(`e${n}_notes`, "Notes", { type: "plain_text_input", placeholder: plain("What did you do?"), ...text("notes") }, true)]),
   ];
+}
+
+/**
+ * Reads entry n of a submitted form. Returns { entry } or { skip } and writes field errors.
+ * `optionalHours`: an entry without time is skipped instead of being an error (EOD review).
+ */
+function readEntry(values, n, errors, { optionalHours = false, comment = "" } = {}) {
+  const rawHours = values[`e${n}_hours`]?.value.value?.trim();
+  if (!rawHours && optionalHours) return { skip: true };
+  const projectId = Number(values[`e${n}_project`]?.value.selected_option?.value) || null;
+  const task = values[`e${n}_task`]?.lt_task?.selected_option?.value;
+  const spentOn = values[`e${n}_date`]?.value.selected_date;
+  const durationError = hoursError(rawHours);
+  if (!projectId) errors[`e${n}_project`] = "Choose a project";
+  if (!task) errors[`e${n}_task`] = "Choose a task or type a new one";
+  else {
+    const taskProject = Number(task.match(/^wp:\d+:(\d+)$/)?.[1]);
+    if (taskProject && projectId && taskProject !== projectId) {
+      errors[`e${n}_task`] = "This task belongs to another project. Pick one from the selected project or type a new one.";
+    }
+  }
+  if (!spentOn) errors[`e${n}_date`] = "Choose the day you did this";
+  else if (spentOn > todayIn(TZ)) errors[`e${n}_date`] = "You can't log time in the future";
+  if (durationError) errors[`e${n}_hours`] = durationError;
+  if (values[`e${n}_act`] && !values[`e${n}_act`].value.selected_option) errors[`e${n}_act`] = "Choose an activity";
+  return {
+    entry: {
+      n,
+      projectId,
+      workPackageId: task?.startsWith("wp:") ? parseInt(task.slice(3), 10) : null,
+      newTask: task?.startsWith("new:") ? task.slice(4).trim() : null,
+      subtask: values[`e${n}_sub`]?.value.value?.trim() || null,
+      activityId: Number(values[`e${n}_act`]?.value.selected_option?.value) || null,
+      hours: parseHours(rawHours),
+      spentOn,
+      comment: values[`e${n}_notes`]?.value.value || comment,
+    },
+  };
+}
+
+/** Adds an error to the last entry of any day whose new entries add up to more than the daily limit. */
+function checkDailyTotals(entries, errors) {
+  const byDay = new Map();
+  for (const e of entries) if (e.spentOn) byDay.set(e.spentOn, [...(byDay.get(e.spentOn) ?? []), e]);
+  for (const [day, list] of byDay) {
+    const total = list.reduce((s, e) => s + (e.hours ?? 0), 0);
+    if (total > MAX_HOURS_PER_DAY + 1e-9) {
+      errors[`e${list.at(-1).n}_hours`] =
+        `Entries on ${prettyDate(day)} add up to ${formatHours(total)}. Max is ${MAX_HOURS_PER_DAY}h a day.`;
+    }
+  }
+}
+
+function logTimeView({ projects, hidden = [], activities }, meta, prev = {}) {
+  const count = Math.min(Math.max(meta.count ?? 1, 1), MAX_ENTRIES);
+  const projectOptions = projects.slice(0, 100).map((p) => option(p.name, p.id));
+  const blocks = [];
   if (hidden.length) {
-    blocks.splice(1, 0, {
+    blocks.push({
       type: "context",
       elements: [{ type: "mrkdwn", text: `Not shown, you can't log time there: ${hidden.map((p) => escape(p.name)).join(", ")}` }],
     });
   }
-
-  if (!projectId) {
-    blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: "Choose a project to add time entries." }] });
-  } else {
-    for (let n = 1; n <= count; n++) {
-      const activity = prev[`e${n}_act`]?.option;
-      blocks.push(
-        { type: "divider" },
-        ...(count > 1 ? [{ type: "section", text: { type: "mrkdwn", text: `*Entry ${n}*` } }] : []),
-        {
-          type: "input",
-          block_id: `e${n}_task`,
-          label: plain("Task"),
-          hint: plain(
-            canCreateTask
-              ? "Search your project's tasks, or type a name to create a new one"
-              : "Search this project's tasks (you can't create new tasks here)",
-          ),
-          element: {
-            type: "external_select",
-            action_id: "lt_task",
-            min_query_length: 0,
-            placeholder: plain("Search or type a new task"),
-            ...(prev[`e${n}_task`]?.option ? { initial_option: prev[`e${n}_task`].option } : {}),
-          },
+  for (let n = 1; n <= count; n++) {
+    blocks.push(
+      ...(n > 1 || hidden.length ? [{ type: "divider" }] : []),
+      ...(count > 1 ? [{ type: "section", text: { type: "mrkdwn", text: `*Entry ${n}*` } }] : []),
+      ...entryBlocks(n, {
+        projectOptions,
+        activities,
+        prev,
+        preset: {
+          project: projectOptions.length === 1 ? projectOptions[0] : undefined,
+          date: n === 1 ? todayIn(TZ) : undefined,
         },
-        input(
-          `e${n}_sub`,
-          "Subtask",
-          { type: "plain_text_input", placeholder: plain("Optional: a smaller step under this task"), ...text(`e${n}_sub`) },
-          true,
-        ),
-        ...(activities.length
-          ? [
-              input(`e${n}_act`, "Activity", {
-                type: "static_select",
-                placeholder: plain("What kind of work?"),
-                options: activities.map((a) => option(a.name, a.id)),
-                ...(activity && activities.some((a) => String(a.id) === activity.value) ? { initial_option: activity } : {}),
-              }),
-            ]
-          : []),
-        {
-          ...input(`e${n}_hours`, "Time spent", {
-            type: "plain_text_input",
-            placeholder: plain("e.g. 2h, 1h30m or 1.5"),
-            ...text(`e${n}_hours`),
-          }),
-          hint: plain(`Up to ${MAX_HOURS_PER_ENTRY}h per entry and per day`),
-        },
-        input(`e${n}_notes`, "Notes", { type: "plain_text_input", placeholder: plain("What did you do?"), ...text(`e${n}_notes`) }, true),
-      );
-    }
-    const buttons = [];
-    if (count < MAX_ENTRIES) buttons.push({ type: "button", action_id: "lt_add", text: plain("+ Add another entry"), value: "add" });
-    if (count > 1) buttons.push({ type: "button", action_id: "lt_remove", text: plain("Remove last"), value: "remove" });
-    if (buttons.length) blocks.push({ type: "divider" }, { type: "actions", block_id: "entries", elements: buttons });
+      }),
+    );
   }
+  const buttons = [];
+  if (count < MAX_ENTRIES) buttons.push({ type: "button", action_id: "lt_add", text: plain("+ Add another entry"), value: "add" });
+  if (count > 1) buttons.push({ type: "button", action_id: "lt_remove", text: plain("Remove last"), value: "remove" });
+  if (buttons.length) blocks.push({ type: "divider" }, { type: "actions", block_id: "entries", elements: buttons });
 
   return {
     type: "modal",
     callback_id: "log_time",
-    private_metadata: JSON.stringify({ projectId, count }),
+    private_metadata: JSON.stringify({ count }),
     title: plain("Log time"),
     submit: plain("Log time"),
     close: plain("Cancel"),
@@ -1007,8 +1080,7 @@ async function refreshLogTimeView({ body, client, logger }, change) {
     const prev = formState(body.view.state?.values);
     const next = change(meta, prev);
     const user = await vynkUser(client, body.user.id);
-    const data = await logTimeData(user, next.projectId);
-    const view = logTimeView(data, next, prev);
+    const view = logTimeView(await logTimeData(user), next, prev);
     await client.views.update({ view_id: body.view.id, hash: body.view.hash, view }).catch((err) => {
       // Another update landed first (e.g. a quick second click): ours is newer, so apply it anyway.
       if (err?.data?.error === "hash_conflict") return client.views.update({ view_id: body.view.id, view });
@@ -1030,19 +1102,13 @@ async function refreshLogTimeView({ body, client, logger }, change) {
   }
 }
 
-app.action("lt_project", async ({ ack, body, action, client, logger }) => {
-  await ack();
-  await refreshLogTimeView({ body, client, logger }, (meta, prev) => {
-    for (const key of Object.keys(prev)) if (/^e\d+_(task|sub|act)$/.test(key)) delete prev[key];
-    return { ...meta, projectId: Number(action.selected_option.value) };
-  });
-});
-
 app.action("lt_add", async ({ ack, body, client, logger }) => {
   await ack();
   await refreshLogTimeView({ body, client, logger }, (meta, prev) => {
     const count = (meta.count ?? 1) + 1;
-    if (prev[`e${count - 1}_act`]) prev[`e${count}_act`] = prev[`e${count - 1}_act`];
+    // Start the new entry with the previous entry's project, date and activity.
+    for (const field of ["project", "date", "act"])
+      if (prev[`e${count - 1}_${field}`]) prev[`e${count}_${field}`] = prev[`e${count - 1}_${field}`];
     return { ...meta, count };
   });
 });
@@ -1057,16 +1123,20 @@ app.options("lt_task", async ({ ack, body }) => {
     const meta = JSON.parse(body.view?.private_metadata || "{}");
     const entryIndex = Number(String(body.block_id ?? "").match(/^e(\d+)_/)?.[1] ?? 0) - 1;
     const picked = Number(body.view?.state?.values?.[`e${entryIndex + 1}_project`]?.value?.selected_option?.value);
-    const projectId = picked || (meta.entries ? meta.entries[entryIndex]?.projectId : meta.projectId);
+    const projectId = picked || meta.entries?.[entryIndex]?.projectId || null;
     const query = String(body.value ?? "").trim();
+    if (!projectId) {
+      await ack({ options: [option("Choose a project first", "none")] });
+      return;
+    }
     const user = await vynkUser(app.client, body.user.id);
-    const tasks = projectId ? await cached(`tasks:${user.id}:${projectId}`, 30_000, () => user.api.projectTasks(projectId)) : [];
+    const tasks = await cached(`tasks:${user.id}:${projectId}`, 30_000, () => user.api.projectTasks(projectId));
     const needle = query.toLowerCase();
     const options = tasks
       .filter((t) => !needle || t.subject.toLowerCase().includes(needle))
       .slice(0, 99)
       .map((t) => option(t.subject, `wp:${t.id}:${projectId}`));
-    const canCreate = projectId ? allowed((await permissions(user)).createTask, projectId) : false;
+    const canCreate = allowed((await permissions(user)).createTask, projectId);
     if (canCreate && query && !tasks.some((t) => t.subject.toLowerCase() === needle))
       options.unshift(option(`+ New task: ${query}`, `new:${query}`));
     await ack({ options });
@@ -1099,32 +1169,13 @@ app.command("/log-time", async ({ ack, command: cmd, client, respond, logger }) 
 app.view("log_time", async ({ ack, body, view, client, logger }) => {
   const values = view.state.values;
   const meta = JSON.parse(view.private_metadata || "{}");
-  const spentOn = values.date?.value.selected_date;
   const errors = {};
   const entries = [];
-  if (!meta.projectId) errors.project = "Choose a project";
-  for (let n = 1; meta.projectId && n <= (meta.count ?? 1); n++) {
-    const task = values[`e${n}_task`]?.lt_task?.selected_option?.value;
-    const rawHours = values[`e${n}_hours`]?.value.value;
-    const durationError = hoursError(rawHours);
-    if (!task) errors[`e${n}_task`] = "Choose a task or type a new one";
-    if (durationError) errors[`e${n}_hours`] = durationError;
-    if (values[`e${n}_act`] && !values[`e${n}_act`].value.selected_option) errors[`e${n}_act`] = "Choose an activity";
-    entries.push({
-      projectId: meta.projectId,
-      workPackageId: task?.startsWith("wp:") ? parseInt(task.slice(3), 10) : null,
-      newTask: task?.startsWith("new:") ? task.slice(4).trim() : null,
-      subtask: values[`e${n}_sub`]?.value.value?.trim() || null,
-      activityId: Number(values[`e${n}_act`]?.value.selected_option?.value) || null,
-      hours: parseHours(rawHours),
-      spentOn,
-      comment: values[`e${n}_notes`]?.value.value ?? "",
-    });
+  for (let n = 1; n <= (meta.count ?? 1); n++) {
+    const { entry } = readEntry(values, n, errors);
+    entries.push(entry);
   }
-  const total = entries.reduce((s, e) => s + (e.hours ?? 0), 0);
-  if (!Object.keys(errors).length && total > MAX_HOURS_PER_DAY + 1e-9) {
-    errors[`e${entries.length}_hours`] = `These entries add up to ${formatHours(total)}. Max is ${MAX_HOURS_PER_DAY}h a day.`;
-  }
+  if (!Object.keys(errors).length) checkDailyTotals(entries, errors);
   if (Object.keys(errors).length) {
     await ack({ response_action: "errors", errors });
     return;
@@ -1340,7 +1391,7 @@ const EOD_CHANNELS = (process.env.EOD_CHANNELS || "eod-updates")
   .split(",")
   .map((s) => s.trim().replace(/^#/, "").toLowerCase())
   .filter(Boolean);
-const MAX_EOD_ITEMS = 15;
+const MAX_EOD_ITEMS = 13;
 const channelNames = new Map();
 
 async function isEodChannel(client, channelId) {
@@ -1442,7 +1493,13 @@ async function startEodReview(client, report) {
   for (const item of result.items) {
     if (!item.projectId) unmatched.push(item.mention ? `${item.mention}: ${item.title}` : item.title);
     else if (!mine.has(item.projectId)) noAccess.add(all.find((p) => p.id === item.projectId)?.name ?? item.mention);
-    else items.push({ ...item, text: item.title, projectName: mine.get(item.projectId).name });
+    else
+      items.push({
+        ...item,
+        text: item.title,
+        projectName: mine.get(item.projectId).name,
+        suggested: Boolean(item.hours && item.estimated),
+      });
   }
 
   if (!items.length) {
@@ -1451,11 +1508,12 @@ async function startEodReview(client, report) {
   }
 
   const messageDay = dateOfTs(report.ts);
-  for (const item of items) item.date = item.date && item.date <= messageDay ? item.date : date;
+  const reportDate = result.date && result.date <= messageDay ? result.date : null;
+  for (const item of items) item.date = item.date && item.date <= messageDay ? item.date : reportDate;
   spreadHours(items, result.hoursGroups ?? []);
 
   // One review card per day, so every entry keeps its own date.
-  const days = [...new Set(items.map((i) => i.date))].sort();
+  const days = [...new Set(items.map((i) => i.date))].sort((a, b) => (a === null) - (b === null) || String(a).localeCompare(String(b)));
   for (const [index, day] of days.entries()) {
     const dayItems = items.filter((i) => i.date === day);
     const shown = dayItems.slice(0, MAX_EOD_ITEMS);
@@ -1496,69 +1554,41 @@ app.action("eod_review", async ({ ack, body, action, client }) => {
     if (review.status !== "pending") throw new UserFacingError("You've already logged this EOD.");
     if (review.slackUserId !== body.user.id) throw new UserFacingError("This EOD belongs to someone else.");
     const user = await vynkUser(client, body.user.id);
-    const { projects: loggable } = await loggableProjects(user);
+    const { projects: loggable, activities } = await logTimeData(user);
     const projectOptions = loggable.slice(0, 100).map((p) => option(p.name, p.id));
-    const activities = new Map();
-    for (const projectId of new Set(review.items.map((i) => i.projectId))) {
-      activities.set(projectId, await cached(`activities:${user.id}:${projectId}`, 300_000, () => user.api.activities(projectId)));
-    }
     const blocks = [
-      input("date", "Date", { type: "datepicker", initial_date: review.date }),
-      { type: "context", elements: [{ type: "mrkdwn", text: "Add the time you spent on each item. Leave it empty to skip an item." }] },
+      {
+        type: "context",
+        elements: [
+          {
+            type: "mrkdwn",
+            text: "Each item is its own time entry. Check the project, task, date and time; leave the time empty to skip an item.",
+          },
+        ],
+      },
     ];
     review.items.forEach((item, index) => {
       const n = index + 1;
-      const acts = activities.get(item.projectId) ?? [];
       blocks.push(
         { type: "divider" },
-        { type: "context", elements: [{ type: "mrkdwn", text: `*From your EOD:* ${escape(item.text).slice(0, 150)}` }] },
-        {
-          type: "input",
-          block_id: `e${n}_project`,
-          label: plain("Project"),
-          element: {
-            type: "static_select",
-            action_id: "value",
-            options: projectOptions.some((o) => o.value === String(item.projectId))
-              ? projectOptions
-              : [option(item.projectName, item.projectId), ...projectOptions].slice(0, 100),
-            initial_option: option(item.projectName, item.projectId),
-          },
-        },
-        {
-          type: "input",
-          block_id: `e${n}_task`,
-          label: plain("Task"),
-          element: {
-            type: "external_select",
-            action_id: "lt_task",
-            min_query_length: 0,
-            placeholder: plain("Search or type a new task"),
-            initial_option: item.taskId
+        { type: "context", elements: [{ type: "mrkdwn", text: `*${n}.* ${escape(item.text).slice(0, 150)}` }] },
+        ...entryBlocks(n, {
+          projectOptions: projectOptions.some((o) => o.value === String(item.projectId))
+            ? projectOptions
+            : [option(item.projectName, item.projectId), ...projectOptions].slice(0, 100),
+          activities,
+          preset: {
+            project: option(item.projectName, item.projectId),
+            task: item.taskId
               ? option(item.taskSubject, `wp:${item.taskId}:${item.projectId}`)
               : option(`+ New task: ${item.text}`, `new:${item.text}`),
+            date: item.date ?? undefined,
+            hours: item.hours ? formatHours(item.hours).replace(" ", "") : undefined,
+            optionalHours: true,
+            subtask: false,
+            notes: false,
           },
-        },
-        input(
-          `e${n}_hours`,
-          "Time spent",
-          {
-            type: "plain_text_input",
-            placeholder: plain("e.g. 2h, 1h30m or 1.5"),
-            ...(item.hours ? { initial_value: formatHours(item.hours).replace(" ", "") } : {}),
-          },
-          true,
-        ),
-        ...(acts.length
-          ? [
-              input(
-                `e${n}_act`,
-                "Activity",
-                { type: "static_select", placeholder: plain("What kind of work?"), options: acts.map((a) => option(a.name, a.id)) },
-                true,
-              ),
-            ]
-          : []),
+        }),
       );
     });
     return {
@@ -1574,40 +1604,16 @@ app.view("eod_log", async ({ ack, body, view, client, logger }) => {
   const values = view.state.values;
   const meta = JSON.parse(view.private_metadata || "{}");
   const review = store.data.reviews[meta.reviewId];
-  const spentOn = values.date?.value.selected_date;
   const errors = {};
   const entries = [];
-  (meta.entries ?? []).forEach(({ projectId: suggestedProject }, index) => {
-    const n = index + 1;
-    const raw = values[`e${n}_hours`]?.value.value?.trim();
-    if (!raw) return;
-    const projectId = Number(values[`e${n}_project`]?.value.selected_option?.value) || suggestedProject;
-    const task = values[`e${n}_task`]?.lt_task?.selected_option?.value;
-    const taskProject = Number(task?.match(/^wp:\d+:(\d+)$/)?.[1]);
-    if (taskProject && taskProject !== projectId) {
-      errors[`e${n}_task`] = "This task belongs to another project. Pick one from the selected project or type a new one.";
-    }
-    const durationError = hoursError(raw);
-    if (durationError) errors[`e${n}_hours`] = durationError;
-    if (!task) errors[`e${n}_task`] = "Choose a task or type a new one";
-    if (values[`e${n}_act`] && !values[`e${n}_act`].value.selected_option) errors[`e${n}_act`] = "Choose an activity";
-    entries.push({
-      n,
-      projectId,
-      workPackageId: task?.startsWith("wp:") ? parseInt(task.slice(3), 10) : null,
-      newTask: task?.startsWith("new:") ? task.slice(4).trim() : null,
-      activityId: Number(values[`e${n}_act`]?.value.selected_option?.value) || null,
-      hours: parseHours(raw),
-      spentOn,
-      comment: review?.items[index]?.notes || review?.items[index]?.text || "",
-    });
+  (meta.entries ?? []).forEach((_, index) => {
+    const item = review?.items[index];
+    const { entry } = readEntry(values, index + 1, errors, { optionalHours: true, comment: item?.notes || item?.text || "" });
+    if (entry) entries.push(entry);
   });
-  if (!review || review.status !== "pending") errors.date = "This EOD was already logged or has expired.";
-  else if (!entries.length) errors.e1_hours = "Add time to at least one item";
-  const total = entries.reduce((s, e) => s + (e.hours ?? 0), 0);
-  if (!Object.keys(errors).length && total > MAX_HOURS_PER_DAY + 1e-9) {
-    errors[`e${entries.at(-1).n}_hours`] = `These add up to ${formatHours(total)}. Max is ${MAX_HOURS_PER_DAY}h a day.`;
-  }
+  if (!review || review.status !== "pending") errors.e1_hours = "This EOD was already logged or has expired.";
+  else if (!entries.length && !Object.keys(errors).length) errors.e1_hours = "Add time to at least one item";
+  if (!Object.keys(errors).length) checkDailyTotals(entries, errors);
   if (Object.keys(errors).length) {
     await ack({ response_action: "errors", errors });
     return;

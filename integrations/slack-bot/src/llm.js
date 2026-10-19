@@ -18,7 +18,12 @@ const ITEM_SCHEMA = {
     },
     hours: {
       type: ["number", "null"],
-      description: "Time spent in hours only if the message states it for this item, else null. Never guess.",
+      description:
+        "Hours for this item: the duration written for it, or, when only a total is written for its group (project section, day or whole report), your estimate of this item's share of that total based on how much work it describes. Null when no duration applies at all.",
+    },
+    hours_estimated: {
+      type: "boolean",
+      description: "True when hours is your estimated share of a group total, false when written for the item or null.",
     },
     notes: { type: "string", description: "Extra detail worth keeping as the time entry comment (may be empty)." },
     date: {
@@ -27,7 +32,7 @@ const ITEM_SCHEMA = {
         "Day this item was done as YYYY-MM-DD: the date heading it is listed under (e.g. 'Monday, October 12, 2026'), else null.",
     },
   },
-  required: ["project_id", "project_mention", "title", "existing_task_id", "hours", "notes", "date"],
+  required: ["project_id", "project_mention", "title", "existing_task_id", "hours", "hours_estimated", "notes", "date"],
 };
 
 const RESULT_SCHEMA = {
@@ -69,7 +74,8 @@ Rules:
   Work for a company in general (not a specific product) belongs to the parent company's own project.
   If several projects fit equally, or none fits, use null.
 - Prefer an existing task when it is clearly the same work; otherwise null so a new task is created.
-- Do not invent hours. Only copy durations written in the message. A duration written on a project heading, a day heading or the report title belongs in hours_groups, not on the items.
+- Never invent time out of nothing: if no duration is written for an item or for any group containing it, hours is null.
+- When a total is written for a group (project heading "PRI ~5hrs:", a day, or the report title "Oct 12-16, 40h"), also list it in hours_groups AND give each item in that group an estimated share (hours_estimated=true): bigger or harder work (building, migrating, setting up production, fixing many issues) gets more, small work (merging a PR, listing follow-ups, short meetings) gets less. Round to 0.25h. The items of a group must add up to its total. A total spanning several days with no per-day totals is split evenly across those days first.
 - Reports may cover several days. Give every item the date of the day heading it is listed under.
 - Keep titles short and clean (no bullets, emojis, links or durations).`;
 
@@ -137,6 +143,7 @@ function sanitize(result, projects, tasks) {
         taskSubject: task && task.projectId === projectId ? task.subject : null,
         hours: Number.isFinite(hours) && hours > 0 && hours <= 24 ? Math.round(hours * 100) / 100 : null,
         notes: String(i.notes ?? "").slice(0, 500),
+        estimated: Boolean(i.hours_estimated),
         date: typeof i.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(i.date) ? i.date : null,
       };
     })
