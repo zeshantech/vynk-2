@@ -145,3 +145,18 @@ function vkBrandText() {
 }
 ["DOMContentLoaded", "turbo:load", "turbo:render"].forEach((e) => document.addEventListener(e, vkBrandText));
 vkBrandText();
+
+// Simple sign-in error: replace OpenProject's long "blocked due to multiple failed attempts" text
+function vkSimpleLoginError() {
+  if (!document.body.classList.contains("controller-account")) return;
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  let node;
+  while ((node = walker.nextNode())) {
+    if (/Invalid user or password/i.test(node.nodeValue) && node.nodeValue !== "Invalid username or password.") {
+      node.nodeValue = "Invalid username or password.";
+    }
+  }
+}
+["DOMContentLoaded", "turbo:load", "turbo:render"].forEach((e) => document.addEventListener(e, vkSimpleLoginError));
+new MutationObserver(vkSimpleLoginError).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+vkSimpleLoginError();
