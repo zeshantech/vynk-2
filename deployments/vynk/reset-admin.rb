@@ -21,10 +21,9 @@ user = User.where(type: "User", admin: true).order(:id).first
 raise "no real admin user found" unless user
 
 mail = ENV["OPENPROJECT_SEED__ADMIN__USER__MAIL"].to_s
-if mail.present?
-  user.login = mail
-  user.mail = mail
-end
+login = ENV["VYNK_ADMIN_LOGIN"].to_s.strip
+user.login = login.presence || mail.presence || user.login
+user.mail = mail if mail.present?
 name = ENV["OPENPROJECT_SEED__ADMIN__USER__NAME"].to_s.strip
 if name.present?
   first, last = name.split(/\s+/, 2)
