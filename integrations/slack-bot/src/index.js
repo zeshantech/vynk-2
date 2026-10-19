@@ -904,6 +904,7 @@ function entryBlocks(n, { projectOptions, activities, prev = {}, preset = {} }) 
     return value ? { initial_value: value } : {};
   };
   const task = prev[`e${n}_task`]?.option ?? preset.task;
+  const projectId = Number(project?.value) || 0;
   return [
     {
       type: "input",
@@ -925,9 +926,9 @@ function entryBlocks(n, { projectOptions, activities, prev = {}, preset = {} }) 
       hint: plain("Search the project's tasks, or type a name to create a new one"),
       element: {
         type: "external_select",
-        action_id: "lt_task",
+        action_id: `lt_task_${projectId}`,
         min_query_length: 0,
-        placeholder: plain("Search or type a new task"),
+        placeholder: plain(projectId ? "Search or type a new task" : "Choose a project first"),
         ...(task ? { initial_option: task } : {}),
       },
     },
@@ -985,7 +986,7 @@ function readEntry(values, n, errors, { optionalHours = false, comment = "" } = 
   const rawHours = values[`e${n}_hours`]?.value.value?.trim();
   if (!rawHours && optionalHours) return { skip: true };
   const projectId = Number(Object.values(values[`e${n}_project`] ?? {})[0]?.selected_option?.value) || null;
-  const task = values[`e${n}_task`]?.lt_task?.selected_option?.value;
+  const task = Object.values(values[`e${n}_task`] ?? {})[0]?.selected_option?.value;
   const spentOn = values[`e${n}_date`]?.value.selected_date;
   const durationError = hoursError(rawHours);
   if (!projectId) errors[`e${n}_project`] = "Choose a project";
@@ -1120,6 +1121,12 @@ app.action("lt_entry_project", async ({ ack, body, action, client, logger }) => 
     const meta = JSON.parse(body.view.private_metadata || "{}");
     meta.projects = { ...(meta.projects ?? {}), [n]: Number(action.selected_option.value) };
     const v = body.view;
+    const projectId = Number(action.selected_option.value);
+    const blocks = v.blocks.map((b) => {
+      if (b.block_id !== `e${n}_task`) return b;
+      const { initial_option, ...element } = b.element;
+      return { ...b, element: { ...element, action_id: `lt_task_${projectId}`, placeholder: plain("Search or type a new task") } };
+    });
     const view = {
       type: "modal",
       callback_id: v.callback_id,
@@ -1127,7 +1134,7 @@ app.action("lt_entry_project", async ({ ack, body, action, client, logger }) => 
       ...(v.submit ? { submit: v.submit } : {}),
       ...(v.close ? { close: v.close } : {}),
       private_metadata: JSON.stringify(meta),
-      blocks: v.blocks,
+      blocks,
     };
     await client.views.update({ view_id: v.id, hash: v.hash, view }).catch((err) => {
       if (err?.data?.error === "hash_conflict") return client.views.update({ view_id: v.id, view });
@@ -1154,11 +1161,15 @@ app.action("lt_remove", async ({ ack, body, client, logger }) => {
   await refreshLogTimeView({ body, client, logger }, (meta) => ({ ...meta, count: Math.max(1, (meta.count ?? 1) - 1) }));
 });
 
-app.options("lt_task", async ({ ack, body }) => {
+app.options(/^lt_task/, async ({ ack, body }) => {
   try {
     const meta = JSON.parse(body.view?.private_metadata || "{}");
     const entryIndex = Number(String(body.block_id ?? "").match(/^e(\d+)_/)?.[1] ?? 0) - 1;
-    const projectId = Number(meta.projects?.[entryIndex + 1]) || meta.entries?.[entryIndex]?.projectId || null;
+    const projectId =
+      Number(String(body.action_id ?? "").match(/^lt_task_(\d+)$/)?.[1]) ||
+      Number(meta.projects?.[entryIndex + 1]) ||
+      meta.entries?.[entryIndex]?.projectId ||
+      null;
     const query = String(body.value ?? "").trim();
     if (!projectId) {
       await ack({ options: [option("Choose a project first", "none")] });
