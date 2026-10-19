@@ -76,7 +76,7 @@ function command(name, handler) {
 
 const HELP = [
   "*Vynk commands*",
-  "`/log-time 2h #123 fixed login bug` — log time on a task (add `yesterday` or `2026-10-15`; no text opens a form)",
+  "`/log-time 2h #123 fixed login bug` — log time on a task (add `yesterday` or `2026-10-15`; no text opens a form where you can also create a new task)",
   "`/week-hours` — your hours this week (`/week-hours last` for last week)",
   "`/time-week-logged-times` — same as `/week-hours`",
   "`/my-tasks` — your open tasks",
@@ -242,7 +242,7 @@ async function logTimeFor(user, { hours, workPackageId, spentOn, comment }) {
 }
 
 async function openLogTimeModal(client, triggerId, user, prefill = {}) {
-  const tasks = await op.openTasksFor(user.id, 100);
+  const [tasks, projects] = await Promise.all([op.openTasksFor(user.id, 100), projectOptions()]);
   const taskOptions = tasks.map((wp) => ({
     text: { type: "plain_text", text: `#${wp.id} ${wp.subject}`.slice(0, 75) },
     value: String(wp.id),
@@ -256,7 +256,15 @@ async function openLogTimeModal(client, triggerId, user, prefill = {}) {
       type: "plain_text_input",
       placeholder: { type: "plain_text", text: "123" },
       ...(prefill.workPackageId ? { initial_value: String(prefill.workPackageId) } : {}),
-    }, taskOptions.length > 0),
+    }, true),
+    ...(projects.length
+      ? [
+          { type: "context", elements: [{ type: "mrkdwn", text: "*Or create a new task* and log the time on it" }] },
+          input("new_task", "New task title", { type: "plain_text_input" }, true),
+          input("new_project", "Project for the new task", { type: "static_select", options: projects }, true),
+          { type: "divider" },
+        ]
+      : []),
     input("hours", "Time spent", {
       type: "plain_text_input",
       placeholder: { type: "plain_text", text: "1.5 or 1h30m" },
@@ -301,9 +309,13 @@ app.view("log_time", async ({ ack, body, view, client, logger }) => {
   const hours = parseHours(values.hours.value.value);
   const typedId = values.task_id.value.value?.trim().replace("#", "");
   const workPackageId = Number(typedId || values.task?.value.selected_option?.value);
+  const newTask = values.new_task?.value.value?.trim();
+  const newProjectId = Number(values.new_project?.value.selected_option?.value);
   const errors = {};
   if (!hours) errors.hours = "Use a number like 1.5 or 1h30m";
-  if (!workPackageId) errors[values.task ? "task" : "task_id"] = "Pick a task or type its ID";
+  if (workPackageId && newTask) errors.new_task = "Pick an existing task or create a new one, not both";
+  else if (newTask && !newProjectId) errors.new_project = "Choose a project for the new task";
+  else if (!workPackageId && !newTask) errors[values.task ? "task" : "task_id"] = "Pick a task, type its ID, or create a new one below";
   else if (typedId && !/^\d+$/.test(typedId)) errors.task_id = "Task ID must be a number";
   if (Object.keys(errors).length) {
     await ack({ response_action: "errors", errors });
@@ -313,9 +325,16 @@ app.view("log_time", async ({ ack, body, view, client, logger }) => {
   const dm = (text) => client.chat.postMessage({ channel: body.user.id, text });
   try {
     const user = await vynkUser(client, body.user.id);
-    const text = await logTimeFor(user, {
+    let created = "";
+    let targetId = workPackageId;
+    if (newTask) {
+      const wp = await op.createTask({ projectId: newProjectId, subject: newTask, assigneeId: user.id });
+      targetId = wp.id;
+      created = `:white_check_mark: Created <${wpUrl(wp.id)}|#${wp.id} ${escape(wp.subject)}>.\n`;
+    }
+    const text = created + await logTimeFor(user, {
       hours,
-      workPackageId,
+      workPackageId: targetId,
       spentOn: values.date.value.selected_date,
       comment: values.comment.value.value ?? "",
     });
