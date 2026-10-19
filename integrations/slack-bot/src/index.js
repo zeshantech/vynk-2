@@ -2,6 +2,7 @@ import bolt from "@slack/bolt";
 import { OpenProject, OpenProjectError } from "./openproject.js";
 import { parseCreateTask, parseLogTime } from "./commands.js";
 import { currentWeek, formatHours, parseHours, resolveDate, todayIn, weekContaining } from "./time.js";
+import { loggedView, menuView, projectsView, tasksView, teamView, weekView } from "./views.js";
 
 const { App, LogLevel } = bolt;
 
@@ -25,6 +26,9 @@ const app = new App({
 class UserFacingError extends Error {}
 
 const wpUrl = (id) => `${BASE_URL}/work_packages/${id}`;
+const urls = { wp: wpUrl, project: (p) => `${BASE_URL}/projects/${p.identifier}` };
+const prettyWeek = (week) =>
+  new Date(`${week.from}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 const projectUrl = (p) => `${BASE_URL}/projects/${p.identifier}`;
 const escape = (text) =>
   String(text ?? "")
@@ -77,27 +81,22 @@ function command(name, handler) {
   });
 }
 
-// ---------- help ----------
-
-const HELP = [
-  "*Vynk commands*",
-  "`/log-time 2h #123 fixed login bug` — log time on a task (add `yesterday` or `2026-10-15`; no text opens a form where you can also create a new task)",
-  "`/week-hours` — your hours this week (`/week-hours last` for last week)",
-  "`/time-week-logged-times` — same as `/week-hours`",
-  "`/my-tasks` — your open tasks",
-  "`/create-task website | Fix header` — create a task assigned to you (no text opens a form)",
-  "`/projects` — list projects",
-  "`/create-project Website Redesign` — create a project _(admin)_",
-  "`/team-hours` — everyone's hours this week _(admin, `last` for last week)_",
-].join("\n");
-
 // ---------- projects ----------
 
 async function projectsReply({ cmd, client }) {
-  await vynkUser(client, cmd.user_id);
-  const projects = await op.projects();
-  if (!projects.length) return "No projects yet.";
-  return `*Projects (${projects.length})*\n${projects.map((p) => `• <${projectUrl(p)}|${escape(p.name)}>  \`${p.identifier}\``).join("\n")}`;
+  const user = await vynkUser(client, cmd.user_id);
+  const week = currentWeek(TZ);
+  const [projects, entries] = await Promise.all([
+    op.projectsFor(user),
+    op.timeEntries({ from: week.from, to: week.to, ...(user.admin ? {} : { userId: user.id }) }),
+  ]);
+  const mine = new Map();
+  const team = new Map();
+  for (const e of entries) {
+    team.set(e.projectId, (team.get(e.projectId) ?? 0) + e.hours);
+    if (e.userId === user.id) mine.set(e.projectId, (mine.get(e.projectId) ?? 0) + e.hours);
+  }
+  return projectsView({ projects, mine, team, urls, showTeam: Boolean(user.admin) });
 }
 
 command("/projects", projectsReply);
@@ -140,15 +139,7 @@ app.view("create_project", async ({ ack, body, view, client, logger }) => {
 
 async function myTasksReply({ cmd, client }) {
   const user = await vynkUser(client, cmd.user_id);
-  const tasks = await op.openTasksFor(user.id);
-  if (!tasks.length) return "You have no open tasks. :tada:";
-  const lines = tasks.map((wp) => {
-    const project = wp._links?.project?.title ?? "";
-    const status = wp._links?.status?.title ?? "";
-    const due = wp.dueDate ? ` · due ${wp.dueDate}` : "";
-    return `• <${wpUrl(wp.id)}|#${wp.id} ${escape(wp.subject)}> — ${escape(project)} · _${escape(status)}_${due}`;
-  });
-  return `*Your open tasks*\n${lines.join("\n")}`;
+  return tasksView({ tasks: await op.openTasksFor(user.id, 30), urls });
 }
 
 command("/my-tasks", myTasksReply);
@@ -237,7 +228,7 @@ app.command("/create-task", async ({ ack, command: cmd, client, respond, logger 
       const wp = await op.createTask({ projectId: project.id, subject, assigneeId: user.id });
       await respond({
         response_type: "ephemeral",
-        text: `:white_check_mark: Created <${wpUrl(wp.id)}|#${wp.id} ${escape(wp.subject)}> in ${escape(project.name)}.${unassignedNote(wp)}`,
+        text: `:white_check_mark: Created <${wpUrl(wp.id)}|${escape(wp.subject)}> in ${escape(project.name)}.${unassignedNote(wp)}`,
       });
       return;
     }
@@ -264,9 +255,7 @@ app.view("create_task", async ({ ack, body, view, client, logger }) => {
     const projectId = Number(values.project.value.selected_option.value);
     const wp = await op.createTask({ projectId, subject, assigneeId: assignee?.id, description: values.description.value.value });
     const who = assignee ? ` for <@${assigneeSlack}>` : "";
-    await dm(
-      `:white_check_mark: Created <${wpUrl(wp.id)}|#${wp.id} ${escape(wp.subject)}>${wp.assigneeSkipped ? "" : who}.${unassignedNote(wp)}`,
-    );
+    await dm(`:white_check_mark: Created <${wpUrl(wp.id)}|${escape(wp.subject)}>${wp.assigneeSkipped ? "" : who}.${unassignedNote(wp)}`);
   } catch (err) {
     if (!(err instanceof UserFacingError)) logger.error("create_task submit failed", err);
     await dm(errorText(err));
@@ -275,23 +264,28 @@ app.view("create_task", async ({ ack, body, view, client, logger }) => {
 
 // ---------- time ----------
 
-async function logTimeFor(user, { hours, workPackageId, spentOn, comment, activityId }) {
+async function logTimeFor(user, { hours, workPackageId, spentOn, comment, activityId }, created = []) {
   const wp = await op.workPackage(workPackageId).catch((err) => {
-    if (err.status === 404) throw new UserFacingError(`Task #${workPackageId} not found.`);
+    if (err.status === 404) throw new UserFacingError("That task doesn't exist anymore.");
     throw err;
   });
-  await op.logTime({ userId: user.id, workPackageId, hours, spentOn, comment, activityId }).catch((err) => {
-    if (err.status === 403)
-      throw new UserFacingError(
-        `You can't log time on #${workPackageId}: you're not a member of its project (or time tracking is off there).`,
-      );
+  const entry = await op.logTime({ userId: user.id, workPackageId, hours, spentOn, comment, activityId }).catch((err) => {
+    if (err.status === 403) throw new UserFacingError("You can't log time here: you're not a member of this project.");
     throw err;
   });
   const week = weekContaining(spentOn);
   const entries = await op.timeEntries({ from: week.from, to: week.to, userId: user.id });
-  const total = entries.reduce((sum, e) => sum + e.hours, 0);
-  const weekLabel = week.from === currentWeek(TZ).from ? "This week" : `Week of ${week.from}`;
-  return `:stopwatch: Logged *${formatHours(hours)}* on <${wpUrl(wp.id)}|${escape(wp.subject)}> for ${spentOn}. ${weekLabel}: *${formatHours(total)}*.`;
+  return loggedView({
+    hours,
+    wp,
+    projectName: wp._links?.project?.title,
+    activityName: entry?._links?.activity?.title,
+    spentOn,
+    weekLabel: week.from === currentWeek(TZ).from ? "This week" : `Week of ${prettyWeek(week)}`,
+    weekTotal: entries.reduce((sum, e) => sum + e.hours, 0),
+    created,
+    urls,
+  });
 }
 
 const cache = new Map();
@@ -454,13 +448,17 @@ app.command("/log-time", async ({ ack, command: cmd, client, respond, logger }) 
     const user = await vynkUser(client, cmd.user_id);
     const spentOn = resolveDate(parsed.date, TZ);
     if (!spentOn) throw new UserFacingError("Date must be `today`, `yesterday` or `YYYY-MM-DD`.");
-    const text = await logTimeFor(user, { ...parsed, spentOn });
-    await respond({ response_type: "ephemeral", text });
+    await respond({ response_type: "ephemeral", ...(await logTimeFor(user, { ...parsed, spentOn })) });
   } catch (err) {
     if (!(err instanceof UserFacingError)) logger.error("/log-time failed", err);
     await respond({ response_type: "ephemeral", text: errorText(err) });
   }
 });
+
+function pickedTitle(view, id) {
+  const block = view.blocks?.find((b) => b.block_id === "task_pick");
+  return block?.element?.options?.find((o) => o.value === String(id))?.text?.text ?? "task";
+}
 
 app.view("log_time", async ({ ack, body, view, client, logger }) => {
   const values = view.state.values;
@@ -480,7 +478,7 @@ app.view("log_time", async ({ ack, body, view, client, logger }) => {
     return;
   }
   await ack();
-  const dm = (text) => client.chat.postMessage({ channel: body.user.id, text });
+  const dm = (msg) => client.chat.postMessage({ channel: body.user.id, ...(typeof msg === "string" ? { text: msg } : msg) });
   try {
     const user = await vynkUser(client, body.user.id);
     const notes = [];
@@ -488,62 +486,46 @@ app.view("log_time", async ({ ack, body, view, client, logger }) => {
     if (!targetId) {
       const wp = await op.createTask({ projectId: meta.projectId, subject: taskTitle, assigneeId: user.id });
       targetId = wp.id;
-      notes.push(`:white_check_mark: New task <${wpUrl(wp.id)}|${escape(wp.subject)}>`);
+      notes.push("New task created");
     }
     if (subtask) {
       const sub = await op.createTask({ projectId: meta.projectId, subject: subtask, assigneeId: user.id, parentId: targetId });
       targetId = sub.id;
-      notes.push(`:white_check_mark: New subtask <${wpUrl(sub.id)}|${escape(sub.subject)}>`);
+      notes.push(`Subtask of ${escape(taskTitle || pickedTitle(view, pickedId))}`);
     }
     cache.delete(`tasks:${meta.projectId}`);
-    const logged = await logTimeFor(user, {
-      hours,
-      workPackageId: targetId,
-      activityId,
-      spentOn: values.date.value.selected_date,
-      comment: values.comment?.value.value ?? "",
-    });
-    await dm([...notes, logged].join("\n"));
+    await dm(
+      await logTimeFor(
+        user,
+        {
+          hours,
+          workPackageId: targetId,
+          activityId,
+          spentOn: values.date.value.selected_date,
+          comment: values.comment?.value.value ?? "",
+        },
+        notes,
+      ),
+    );
   } catch (err) {
     if (!(err instanceof UserFacingError)) logger.error("log_time submit failed", err);
     await dm(errorText(err));
   }
 });
 
-const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
 async function weekHours({ cmd, client, text }) {
   const user = await vynkUser(client, cmd.user_id);
   const weeksBack = /^last/i.test(text) ? 1 : 0;
   const week = currentWeek(TZ, weeksBack);
   const entries = await op.timeEntries({ from: week.from, to: week.to, userId: user.id });
-  const total = entries.reduce((sum, e) => sum + e.hours, 0);
-  const label = weeksBack ? "Last week" : "This week";
-  if (!entries.length) return `*${label}* (${week.from} → ${week.to}): no time logged yet. Use \`/log-time\`.`;
-
-  const perDay = week.days.map((day, i) => {
-    const h = entries.filter((e) => e.spentOn === day).reduce((sum, e) => sum + e.hours, 0);
-    return `${DAY_NAMES[i]} ${day.slice(5)}  ${h ? `*${formatHours(h)}*` : "—"}`;
+  return weekView({
+    label: weeksBack ? "Last week" : "This week",
+    week,
+    entries,
+    urls,
+    otherWeekLabel: weeksBack ? "This week" : "Last week",
+    otherWeekValue: weeksBack ? "this" : "last",
   });
-  const perTask = new Map();
-  for (const e of entries) {
-    const key = e.workPackageId ?? 0;
-    const current = perTask.get(key) ?? { title: e.workPackageTitle ?? "Other", hours: 0 };
-    current.hours += e.hours;
-    perTask.set(key, current);
-  }
-  const taskLines = [...perTask.entries()]
-    .sort((a, b) => b[1].hours - a[1].hours)
-    .map(([id, t]) => `• ${id ? `<${wpUrl(id)}|#${id} ${escape(t.title)}>` : escape(t.title)} — ${formatHours(t.hours)}`);
-
-  return {
-    text: `${label}: ${formatHours(total)}`,
-    blocks: [
-      { type: "section", text: { type: "mrkdwn", text: `*${label}* (${week.from} → ${week.to}) — *${formatHours(total)}* total` } },
-      { type: "section", text: { type: "mrkdwn", text: perDay.join("\n") } },
-      { type: "section", text: { type: "mrkdwn", text: `*By task*\n${taskLines.slice(0, 25).join("\n")}` } },
-    ],
-  };
 }
 
 command("/week-hours", weekHours);
@@ -556,16 +538,12 @@ async function teamHours({ cmd, client, text }) {
   const [entries, users] = await Promise.all([op.timeEntries({ from: week.from, to: week.to }), op.activeUsers()]);
   const totals = new Map(users.map((u) => [u.id, { name: u.name, hours: 0 }]));
   for (const e of entries) {
-    const row = totals.get(e.userId) ?? { name: e.userName ?? `User ${e.userId}`, hours: 0 };
+    const row = totals.get(e.userId) ?? { name: e.userName ?? "Unknown", hours: 0 };
     row.hours += e.hours;
     totals.set(e.userId, row);
   }
   const rows = [...totals.values()].sort((a, b) => b.hours - a.hours);
-  const sum = rows.reduce((s, r) => s + r.hours, 0);
-  const label = weeksBack ? "Last week" : "This week";
-  return `*Team hours — ${label}* (${week.from} → ${week.to}) — *${formatHours(sum)}*\n${rows
-    .map((r) => `• ${escape(r.name)} — ${r.hours ? `*${formatHours(r.hours)}*` : "_none_"}`)
-    .join("\n")}`;
+  return teamView({ label: weeksBack ? "Last week" : "This week", week, rows });
 }
 
 command("/team-hours", teamHours);
@@ -573,39 +551,18 @@ command("/team-hours", teamHours);
 // ---------- @vynk menu ----------
 
 const MENU = [
-  ["log_time", ":stopwatch: Log time"],
-  ["week_hours", ":calendar: My hours this week"],
-  ["last_week_hours", ":calendar: My hours last week"],
-  ["my_tasks", ":clipboard: My open tasks"],
-  ["create_task", ":heavy_plus_sign: Create a task"],
-  ["projects", ":file_folder: Projects"],
-  ["create_project", ":sparkles: Create a project (admin)"],
-  ["team_hours", ":busts_in_silhouette: Team hours this week (admin)"],
+  ["log_time", "Log time"],
+  ["week_hours", "My week"],
+  ["my_tasks", "My tasks"],
+  ["projects", "Projects"],
+  ["create_task", "New task"],
+  ["create_project", "New project  ·  admin"],
+  ["team_hours", "Team hours  ·  admin"],
 ];
 
-const menuMessage = (slackUserId) => ({
-  text: "What do you want to do in Vynk?",
-  blocks: [
-    {
-      type: "section",
-      text: { type: "mrkdwn", text: `Hi <@${slackUserId}>, what do you want to do in Vynk?` },
-      accessory: {
-        type: "static_select",
-        action_id: "vynk_menu",
-        placeholder: { type: "plain_text", text: "Choose an action" },
-        options: MENU.map(([value, label]) => ({ text: { type: "plain_text", text: label, emoji: true }, value })),
-      },
-    },
-  ],
-});
+const menuMessage = () => menuView(MENU);
 
-command("/vynk", async ({ cmd }) => ({
-  ...menuMessage(cmd.user_id),
-  blocks: [
-    ...menuMessage(cmd.user_id).blocks,
-    { type: "context", elements: [{ type: "mrkdwn", text: HELP.split("\n").slice(1).join("  ·  ") }] },
-  ],
-}));
+command("/vynk", async () => menuMessage());
 
 app.event("app_mention", async ({ event, client, logger }) => {
   try {
@@ -613,7 +570,7 @@ app.event("app_mention", async ({ event, client, logger }) => {
       channel: event.channel,
       user: event.user,
       ...(event.thread_ts ? { thread_ts: event.thread_ts } : {}),
-      ...menuMessage(event.user),
+      ...menuMessage(),
     });
   } catch (err) {
     logger.error("app_mention failed", err);
@@ -623,7 +580,7 @@ app.event("app_mention", async ({ event, client, logger }) => {
 app.message(async ({ message, say, logger }) => {
   if (message.channel_type !== "im" || message.subtype || message.bot_id) return;
   try {
-    await say(menuMessage(message.user));
+    await say(menuMessage());
   } catch (err) {
     logger.error("dm menu failed", err);
   }
@@ -648,9 +605,6 @@ app.action("vynk_menu", async ({ ack, body, action, client, respond, logger }) =
       case "week_hours":
         await reply(await weekHours({ cmd, client, text: "" }));
         break;
-      case "last_week_hours":
-        await reply(await weekHours({ cmd, client, text: "last" }));
-        break;
       case "my_tasks":
         await reply(await myTasksReply({ cmd, client }));
         break;
@@ -664,6 +618,21 @@ app.action("vynk_menu", async ({ ack, body, action, client, respond, logger }) =
   } catch (err) {
     if (!(err instanceof UserFacingError)) logger.error("vynk_menu failed", err);
     await reply(errorText(err));
+  }
+});
+
+app.action("open_log_time", async ({ ack, body, client }) => {
+  await ack();
+  await openLogTimeModal(client, body.trigger_id, body.user.id);
+});
+
+app.action("show_week", async ({ ack, body, action, client, respond, logger }) => {
+  await ack();
+  try {
+    await respond({ replace_original: true, ...(await weekHours({ cmd: { user_id: body.user.id }, client, text: action.value })) });
+  } catch (err) {
+    if (!(err instanceof UserFacingError)) logger.error("show_week failed", err);
+    await respond({ response_type: "ephemeral", replace_original: false, text: errorText(err) });
   }
 });
 

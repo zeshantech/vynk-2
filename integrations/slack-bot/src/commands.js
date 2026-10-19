@@ -10,7 +10,10 @@ const DATE_WORD = /^(today|yesterday|\d{4}-\d{2}-\d{2})$/i;
  * Hours and task may come in any order; the date word may be anywhere.
  */
 export function parseLogTime(text) {
-  const tokens = String(text ?? "").trim().split(/\s+/).filter(Boolean);
+  const tokens = String(text ?? "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
   let hours = null;
   let workPackageId = null;
   let date = null;

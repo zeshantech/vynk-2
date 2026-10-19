@@ -4,7 +4,10 @@ const UNIT_PATTERN = /^(?:(\d+(?:\.\d+)?)h)?\s*(?:(\d+)m)?$/i;
 
 /** "2h", "1.5", "1h30m", "90m" -> hours as a number; null when it can't be parsed. */
 export function parseHours(input) {
-  const text = String(input ?? "").trim().toLowerCase().replace(/\s+/g, "");
+  const text = String(input ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "");
   if (!text) return null;
   if (/^\d+(\.\d+)?$/.test(text)) return Number(text) > 0 ? Number(text) : null;
   const match = text.match(UNIT_PATTERN);

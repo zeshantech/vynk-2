@@ -233,6 +233,8 @@ export class OpenProject {
       userName: e._links?.user?.title,
       workPackageId: idFromHref(e._links?.workPackage?.href ?? e._links?.entity?.href),
       workPackageTitle: e._links?.workPackage?.title ?? e._links?.entity?.title,
+      projectId: idFromHref(e._links?.project?.href),
+      projectTitle: e._links?.project?.title,
       comment: e.comment?.raw ?? "",
     }));
   }
