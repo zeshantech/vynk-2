@@ -19,6 +19,18 @@ pw = ENV.fetch("OPENPROJECT_SEED__ADMIN__USER__PASSWORD")
 user = User.where(type: "User", admin: true).order(:id).first
 raise "no real admin user found" unless user
 
+mail = ENV["OPENPROJECT_SEED__ADMIN__USER__MAIL"].to_s
+if mail.present?
+  user.login = mail
+  user.mail = mail
+end
+name = ENV["OPENPROJECT_SEED__ADMIN__USER__NAME"].to_s.strip
+if name.present?
+  first, last = name.split(/\s+/, 2)
+  user.firstname = first
+  user.lastname = last.presence || first
+end
+
 user.password = pw
 user.password_confirmation = pw
 user.force_password_change = false if user.respond_to?(:force_password_change=)
