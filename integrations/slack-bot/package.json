@@ -9,8 +9,11 @@
     "start": "node src/index.js",
     "test": "node --test test/*.test.js"
   },
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "dependencies": {
-    "@slack/bolt": "^4.4.0"
+    "@slack/bolt": "^4.4.0",
+    "groq-sdk": "^1.6.0"
   }
 }

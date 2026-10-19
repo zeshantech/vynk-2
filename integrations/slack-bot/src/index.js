@@ -55,7 +55,7 @@ const sessions = new Sessions({
   dataDir: process.env.DATA_DIR || "/data",
 });
 const store = new Store(process.env.DATA_DIR || "/data");
-const eodReader = new EodReader({ apiKey: process.env.ANTHROPIC_API_KEY, model: process.env.EOD_MODEL || "claude-sonnet-5-5" });
+const eodReader = new EodReader({ apiKey: process.env.GROQ_API_KEY, model: process.env.EOD_MODEL || "openai/gpt-oss-20b" });
 
 const app = new App({
   token: env("SLACK_BOT_TOKEN"),
@@ -923,7 +923,7 @@ async function handleEodMessage(message, client) {
   await startEodReview(client, { slackUserId: msg.user, channel: msg.channel, ts: msg.ts, text, createdAt: Date.now() });
 }
 
-/** Claude decides what the report contains; the rule-based parser is only a fallback. */
+/** The LLM decides what the report contains; the rule-based parser is only a fallback. */
 async function readEod({ user, report, mine }) {
   const all = await cached("projects:all", 5 * 60_000, () => op.projects());
   const projects = all.map((p) => ({ ...p, member: mine.has(p.id) }));
@@ -942,7 +942,7 @@ async function readEod({ user, report, mine }) {
     try {
       return await eodReader.read({ text: report.text, projects, tasks, today });
     } catch (err) {
-      app.logger.error("Claude could not read the EOD, using the rule-based parser", err);
+      app.logger.error("LLM could not read the EOD, using the rule-based parser", err);
     }
   }
 

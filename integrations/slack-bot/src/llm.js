@@ -1,53 +1,43 @@
-// Claude reads an EOD message and decides what was worked on, for which project and how long.
+// An LLM on GroqCloud reads an EOD message and decides what was worked on, for which project and how long.
 
-const API_URL = "https://api.anthropic.com/v1/messages";
+import Groq from "groq-sdk";
 
-const TOOL = {
-  name: "record_eod",
-  description: "Record the structured result of reading one Slack message from an end-of-day channel.",
-  input_schema: {
-    type: "object",
-    properties: {
-      is_eod: {
-        type: "boolean",
-        description:
-          "True only if the message reports work the author did (an end-of-day / daily update). False for chit-chat, questions, announcements, plans only.",
-      },
-      date: {
-        type: ["string", "null"],
-        description: "The day the work was done as YYYY-MM-DD if the message states one, otherwise null.",
-      },
-      items: {
-        type: "array",
-        description: "Each distinct piece of work DONE (not planned, not blockers). One item per task.",
-        items: {
-          type: "object",
-          properties: {
-            project_id: {
-              type: ["integer", "null"],
-              description: "id of the project from the provided list this work belongs to, or null if none fits.",
-            },
-            project_mention: { type: "string", description: "How the message referred to the project (empty if not mentioned)." },
-            title: {
-              type: "string",
-              description: "Short task title in sentence case, max 80 chars, describing the work (e.g. 'Deploy backend to production').",
-            },
-            existing_task_id: {
-              type: ["integer", "null"],
-              description: "id of an existing open task from the provided list that is clearly the same work, else null.",
-            },
-            hours: {
-              type: ["number", "null"],
-              description: "Time spent in hours only if the message states it for this item, else null. Never guess.",
-            },
-            notes: { type: "string", description: "Extra detail from the message worth keeping as the time entry comment (may be empty)." },
-          },
-          required: ["project_id", "project_mention", "title", "existing_task_id", "hours", "notes"],
-        },
-      },
+const ITEM_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    project_id: {
+      type: ["integer", "null"],
+      description: "id of the project from the provided list this work belongs to, or null if none fits.",
     },
-    required: ["is_eod", "date", "items"],
+    project_mention: { type: "string", description: "How the message referred to the project (empty if not mentioned)." },
+    title: { type: "string", description: "Short task title in sentence case, max 80 chars (e.g. 'Deploy backend to production')." },
+    existing_task_id: {
+      type: ["integer", "null"],
+      description: "id of an existing open task from the list that is clearly the same work, else null.",
+    },
+    hours: {
+      type: ["number", "null"],
+      description: "Time spent in hours only if the message states it for this item, else null. Never guess.",
+    },
+    notes: { type: "string", description: "Extra detail worth keeping as the time entry comment (may be empty)." },
   },
+  required: ["project_id", "project_mention", "title", "existing_task_id", "hours", "notes"],
+};
+
+const RESULT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    is_eod: {
+      type: "boolean",
+      description:
+        "True only if the message reports work the author did (end-of-day / daily update). False for chit-chat, questions, announcements or plans only.",
+    },
+    date: { type: ["string", "null"], description: "Day the work was done as YYYY-MM-DD if the message states one, else null." },
+    items: { type: "array", description: "Each distinct piece of work DONE (not planned, not blockers).", items: ITEM_SCHEMA },
+  },
+  required: ["is_eod", "date", "items"],
 };
 
 const SYSTEM = `You turn Slack end-of-day (EOD) reports into time-tracking items for a project management tool.
@@ -60,12 +50,12 @@ Rules:
 
 export class EodReader {
   constructor({ apiKey, model }) {
-    this.apiKey = apiKey;
     this.model = model;
+    this.client = apiKey ? new Groq({ apiKey, timeout: 45_000, maxRetries: 2 }) : null;
   }
 
   get enabled() {
-    return Boolean(this.apiKey);
+    return Boolean(this.client);
   }
 
   /**
@@ -79,35 +69,19 @@ export class EodReader {
       projects: projects.map((p) => ({ id: p.id, name: p.name, identifier: p.identifier, author_is_member: p.member })),
       open_tasks: tasks.map((t) => ({ id: t.id, project_id: t.projectId, title: t.subject })),
     };
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 45_000);
-    try {
-      const res = await fetch(API_URL, {
-        method: "POST",
-        signal: controller.signal,
-        headers: { "content-type": "application/json", "x-api-key": this.apiKey, "anthropic-version": "2023-06-01" },
-        body: JSON.stringify({
-          model: this.model,
-          max_tokens: 4000,
-          system: SYSTEM,
-          tools: [TOOL],
-          tool_choice: { type: "tool", name: TOOL.name },
-          messages: [
-            {
-              role: "user",
-              content: `Context (JSON):\n${JSON.stringify(context)}\n\nSlack message:\n<<<\n${text.slice(0, 8000)}\n>>>`,
-            },
-          ],
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(`Claude API ${res.status}: ${data?.error?.message ?? "request failed"}`);
-      const call = data.content?.find((c) => c.type === "tool_use" && c.name === TOOL.name);
-      if (!call) throw new Error("Claude returned no result");
-      return sanitize(call.input, projects, tasks);
-    } finally {
-      clearTimeout(timer);
-    }
+    const completion = await this.client.chat.completions.create({
+      model: this.model,
+      temperature: 0,
+      max_completion_tokens: 4000,
+      response_format: { type: "json_schema", json_schema: { name: "eod_report", strict: true, schema: RESULT_SCHEMA } },
+      messages: [
+        { role: "system", content: SYSTEM },
+        { role: "user", content: `Context (JSON):\n${JSON.stringify(context)}\n\nSlack message:\n<<<\n${text.slice(0, 8000)}\n>>>` },
+      ],
+    });
+    const content = completion.choices?.[0]?.message?.content;
+    if (!content) throw new Error("The model returned no result");
+    return sanitize(JSON.parse(content), projects, tasks);
   }
 }
 
