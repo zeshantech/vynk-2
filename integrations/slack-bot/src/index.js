@@ -86,28 +86,52 @@ const HELP = [
   "`/team-hours` — everyone's hours this week _(admin, `last` for last week)_",
 ].join("\n");
 
-command("/vynk", async () => HELP);
 
 // ---------- projects ----------
 
-command("/projects", async ({ cmd, client }) => {
+async function projectsReply({ cmd, client }) {
   await vynkUser(client, cmd.user_id);
   const projects = await op.projects();
   if (!projects.length) return "No projects yet.";
   return `*Projects (${projects.length})*\n${projects.map((p) => `• <${projectUrl(p)}|${escape(p.name)}>  \`${p.identifier}\``).join("\n")}`;
-});
+}
+
+command("/projects", projectsReply);
+
+async function createProjectFor(admin, name) {
+  const project = await op.createProject(name);
+  await op.addMember({ projectId: project.id, userId: admin.id }).catch(() => null);
+  return project;
+}
 
 command("/create-project", async ({ cmd, client, text }) => {
   const admin = await requireAdmin(client, cmd.user_id);
   if (!text) return "Usage: `/create-project Project name`";
-  const project = await op.createProject(text);
-  await op.addMember({ projectId: project.id, userId: admin.id }).catch(() => null);
+  const project = await createProjectFor(admin, text);
   return { response_type: "in_channel", text: `:white_check_mark: Project <${projectUrl(project)}|${escape(project.name)}> created by <@${cmd.user_id}>.` };
+});
+
+app.view("create_project", async ({ ack, body, view, client, logger }) => {
+  const name = view.state.values.name.value.value?.trim();
+  if (!name) {
+    await ack({ response_action: "errors", errors: { name: "Name is required" } });
+    return;
+  }
+  await ack();
+  const dm = (text) => client.chat.postMessage({ channel: body.user.id, text });
+  try {
+    const admin = await requireAdmin(client, body.user.id);
+    const project = await createProjectFor(admin, name);
+    await dm(`:white_check_mark: Project <${projectUrl(project)}|${escape(project.name)}> created.`);
+  } catch (err) {
+    if (!(err instanceof UserFacingError)) logger.error("create_project submit failed", err);
+    await dm(errorText(err));
+  }
 });
 
 // ---------- tasks ----------
 
-command("/my-tasks", async ({ cmd, client }) => {
+async function myTasksReply({ cmd, client }) {
   const user = await vynkUser(client, cmd.user_id);
   const tasks = await op.openTasksFor(user.id);
   if (!tasks.length) return "You have no open tasks. :tada:";
@@ -118,7 +142,9 @@ command("/my-tasks", async ({ cmd, client }) => {
     return `• <${wpUrl(wp.id)}|#${wp.id} ${escape(wp.subject)}> — ${escape(project)} · _${escape(status)}_${due}`;
   });
   return `*Your open tasks*\n${lines.join("\n")}`;
-});
+}
+
+command("/my-tasks", myTasksReply);
 
 const unassignedNote = (wp) => (wp.assigneeSkipped ? " _(left unassigned: that person isn't a member of the project)_" : "");
 
@@ -135,6 +161,26 @@ const input = (blockId, label, element, optional = false) => ({
   element: { action_id: "value", ...element },
 });
 
+async function openCreateTaskModal(client, triggerId, slackUserId, subject) {
+  const options = await projectOptions();
+  if (!options.length) throw new UserFacingError("There are no projects yet.");
+  await client.views.open({
+    trigger_id: triggerId,
+    view: {
+      type: "modal",
+      callback_id: "create_task",
+      title: { type: "plain_text", text: "New task" },
+      submit: { type: "plain_text", text: "Create" },
+      blocks: [
+        input("project", "Project", { type: "static_select", options }),
+        input("subject", "Title", { type: "plain_text_input", ...(subject ? { initial_value: subject } : {}) }),
+        input("description", "Description", { type: "plain_text_input", multiline: true }, true),
+        input("assignee", "Assignee", { type: "users_select", initial_user: slackUserId }, true),
+      ],
+    },
+  });
+}
+
 app.command("/create-task", async ({ ack, command: cmd, client, respond, logger }) => {
   await ack();
   try {
@@ -147,24 +193,7 @@ app.command("/create-task", async ({ ack, command: cmd, client, respond, logger 
       await respond({ response_type: "ephemeral", text: `:white_check_mark: Created <${wpUrl(wp.id)}|#${wp.id} ${escape(wp.subject)}> in ${escape(project.name)}.${unassignedNote(wp)}` });
       return;
     }
-    const options = await projectOptions();
-    if (!options.length) throw new UserFacingError("There are no projects yet.");
-    await client.views.open({
-      trigger_id: cmd.trigger_id,
-      view: {
-        type: "modal",
-        callback_id: "create_task",
-        private_metadata: JSON.stringify({ channel: cmd.channel_id }),
-        title: { type: "plain_text", text: "New task" },
-        submit: { type: "plain_text", text: "Create" },
-        blocks: [
-          input("project", "Project", { type: "static_select", options }),
-          input("subject", "Title", { type: "plain_text_input", ...(subject ? { initial_value: subject } : {}) }),
-          input("description", "Description", { type: "plain_text_input", multiline: true }, true),
-          input("assignee", "Assignee", { type: "users_select", initial_user: cmd.user_id }, true),
-        ],
-      },
-    });
+    await openCreateTaskModal(client, cmd.trigger_id, cmd.user_id, subject);
   } catch (err) {
     if (!(err instanceof UserFacingError)) logger.error("/create-task failed", err);
     await respond({ response_type: "ephemeral", text: errorText(err) });
@@ -336,7 +365,7 @@ async function weekHours({ cmd, client, text }) {
 command("/week-hours", weekHours);
 command("/time-week-logged-times", weekHours);
 
-command("/team-hours", async ({ cmd, client, text }) => {
+async function teamHours({ cmd, client, text }) {
   await requireAdmin(client, cmd.user_id);
   const weeksBack = /^last/i.test(text) ? 1 : 0;
   const week = currentWeek(TZ, weeksBack);
@@ -353,6 +382,105 @@ command("/team-hours", async ({ cmd, client, text }) => {
   return `*Team hours — ${label}* (${week.from} → ${week.to}) — *${formatHours(sum)}*\n${rows
     .map((r) => `• ${escape(r.name)} — ${r.hours ? `*${formatHours(r.hours)}*` : "_none_"}`)
     .join("\n")}`;
+}
+
+command("/team-hours", teamHours);
+
+// ---------- @vynk menu ----------
+
+const MENU = [
+  ["log_time", ":stopwatch: Log time"],
+  ["week_hours", ":calendar: My hours this week"],
+  ["last_week_hours", ":calendar: My hours last week"],
+  ["my_tasks", ":clipboard: My open tasks"],
+  ["create_task", ":heavy_plus_sign: Create a task"],
+  ["projects", ":file_folder: Projects"],
+  ["create_project", ":sparkles: Create a project (admin)"],
+  ["team_hours", ":busts_in_silhouette: Team hours this week (admin)"],
+];
+
+const menuMessage = (slackUserId) => ({
+  text: "What do you want to do in Vynk?",
+  blocks: [
+    {
+      type: "section",
+      text: { type: "mrkdwn", text: `Hi <@${slackUserId}>, what do you want to do in Vynk?` },
+      accessory: {
+        type: "static_select",
+        action_id: "vynk_menu",
+        placeholder: { type: "plain_text", text: "Choose an action" },
+        options: MENU.map(([value, label]) => ({ text: { type: "plain_text", text: label, emoji: true }, value })),
+      },
+    },
+  ],
+});
+
+command("/vynk", async ({ cmd }) => ({ ...menuMessage(cmd.user_id), blocks: [...menuMessage(cmd.user_id).blocks, { type: "context", elements: [{ type: "mrkdwn", text: HELP.split("\n").slice(1).join("  ·  ") }] }] }));
+
+app.event("app_mention", async ({ event, client, logger }) => {
+  try {
+    await client.chat.postEphemeral({ channel: event.channel, user: event.user, ...(event.thread_ts ? { thread_ts: event.thread_ts } : {}), ...menuMessage(event.user) });
+  } catch (err) {
+    logger.error("app_mention failed", err);
+  }
+});
+
+app.message(async ({ message, say, logger }) => {
+  if (message.channel_type !== "im" || message.subtype || message.bot_id) return;
+  try {
+    await say(menuMessage(message.user));
+  } catch (err) {
+    logger.error("dm menu failed", err);
+  }
+});
+
+app.action("vynk_menu", async ({ ack, body, action, client, respond, logger }) => {
+  await ack();
+  const userId = body.user.id;
+  const cmd = { user_id: userId };
+  const reply = (r) => respond({ response_type: "ephemeral", replace_original: false, ...(typeof r === "string" ? { text: r } : r) });
+  try {
+    switch (action.selected_option.value) {
+      case "log_time":
+        await openLogTimeModal(client, body.trigger_id, await vynkUser(client, userId));
+        break;
+      case "create_task":
+        await vynkUser(client, userId);
+        await openCreateTaskModal(client, body.trigger_id, userId);
+        break;
+      case "create_project":
+        await requireAdmin(client, userId);
+        await client.views.open({
+          trigger_id: body.trigger_id,
+          view: {
+            type: "modal",
+            callback_id: "create_project",
+            title: { type: "plain_text", text: "New project" },
+            submit: { type: "plain_text", text: "Create" },
+            blocks: [input("name", "Project name", { type: "plain_text_input" })],
+          },
+        });
+        break;
+      case "week_hours":
+        await reply(await weekHours({ cmd, client, text: "" }));
+        break;
+      case "last_week_hours":
+        await reply(await weekHours({ cmd, client, text: "last" }));
+        break;
+      case "my_tasks":
+        await reply(await myTasksReply({ cmd, client }));
+        break;
+      case "projects":
+        await reply(await projectsReply({ cmd, client }));
+        break;
+      case "team_hours":
+        await reply(await teamHours({ cmd, client, text: "" }));
+        break;
+    }
+  } catch (err) {
+    if (!(err instanceof UserFacingError)) logger.error("vynk_menu failed", err);
+    await reply(errorText(err));
+  }
 });
 
 // ---------- weekly reminder ----------
