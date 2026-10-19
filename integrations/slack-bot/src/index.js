@@ -789,6 +789,26 @@ const noCreateRights = (err) => {
   throw err;
 };
 
+/**
+ * Fills in time for items that have none from totals written for a group (a project section,
+ * a day or the whole report): what's left is split per day first, then per item, in 15-minute steps.
+ */
+function spreadHours(items, groups) {
+  const specificity = (g) => (g.projectId ? 2 : 0) + (g.date ? 1 : 0);
+  for (const g of [...groups].sort((a, b) => specificity(b) - specificity(a))) {
+    const pool = items.filter((i) => (!g.projectId || i.projectId === g.projectId) && (!g.date || i.date === g.date));
+    const rest = g.hours - pool.reduce((sum, i) => sum + (i.hours ?? 0), 0);
+    const missing = pool.filter((i) => !i.hours);
+    if (rest <= 0 || !missing.length) continue;
+    const days = [...new Set(missing.map((i) => i.date))];
+    for (const day of days) {
+      const dayItems = missing.filter((i) => i.date === day);
+      const each = Math.min(MAX_HOURS_PER_ENTRY, Math.max(0.25, Math.round((rest / days.length / dayItems.length) * 4) / 4));
+      for (const item of dayItems) Object.assign(item, { hours: each, suggested: true });
+    }
+  }
+}
+
 /** The project a short mention like "PRI" or "atlas-chris" clearly refers to, or null. */
 function explicitProject(mention, projects) {
   const m = normalize(mention);
@@ -1430,42 +1450,41 @@ async function startEodReview(client, report) {
     return;
   }
 
-  // "PRI ~5hrs:" covers the whole section: spread what's left over items without their own time.
-  for (const { projectId, hours } of result.projectHours ?? []) {
-    const list = items.filter((i) => i.projectId === projectId);
-    const missing = list.filter((i) => !i.hours);
-    const rest = hours - list.reduce((sum, i) => sum + (i.hours ?? 0), 0);
-    if (rest <= 0 || !missing.length) continue;
-    const each = Math.min(MAX_HOURS_PER_ENTRY, Math.max(0.25, Math.round((rest / missing.length) * 4) / 4));
-    for (const item of missing) Object.assign(item, { hours: each, suggested: true });
-  }
+  const messageDay = dateOfTs(report.ts);
+  for (const item of items) item.date = item.date && item.date <= messageDay ? item.date : date;
+  spreadHours(items, result.hoursGroups ?? []);
 
-  const extra = Math.max(0, items.length - MAX_EOD_ITEMS);
-  const shown = items.slice(0, MAX_EOD_ITEMS);
-  for (const projectId of new Set(shown.filter((i) => !i.taskId).map((i) => i.projectId))) {
-    const tasks = await cached(`tasks:${user.id}:${projectId}`, 30_000, () => user.api.projectTasks(projectId)).catch(() => []);
-    for (const item of shown.filter((i) => i.projectId === projectId && !i.taskId)) {
-      const task = matchTask(item.text, tasks);
-      if (task) Object.assign(item, { taskId: task.id, taskSubject: task.subject });
+  // One review card per day, so every entry keeps its own date.
+  const days = [...new Set(items.map((i) => i.date))].sort();
+  for (const [index, day] of days.entries()) {
+    const dayItems = items.filter((i) => i.date === day);
+    const shown = dayItems.slice(0, MAX_EOD_ITEMS);
+    for (const projectId of new Set(shown.filter((i) => !i.taskId).map((i) => i.projectId))) {
+      const tasks = await cached(`tasks:${user.id}:${projectId}`, 30_000, () => user.api.projectTasks(projectId)).catch(() => []);
+      for (const item of shown.filter((i) => i.projectId === projectId && !i.taskId)) {
+        const task = matchTask(item.text, tasks);
+        if (task) Object.assign(item, { taskId: task.id, taskSubject: task.subject });
+      }
     }
+    const last = index === days.length - 1;
+    const review = {
+      id: crypto.randomUUID(),
+      slackUserId: report.slackUserId,
+      channel: report.channel,
+      ts: report.ts,
+      date: day,
+      items: shown,
+      noAccess: last ? [...noAccess] : [],
+      unmatched: last ? unmatched : [],
+      extra: dayItems.length - shown.length,
+      part: days.length > 1 ? { index: index + 1, of: days.length } : null,
+      status: "pending",
+      createdAt: Date.now(),
+    };
+    const posted = await dm(eodReviewView({ review, source: link, urls }));
+    Object.assign(review, { dmChannel: posted.channel, dmTs: posted.ts });
+    store.data.reviews[review.id] = review;
   }
-
-  const review = {
-    id: crypto.randomUUID(),
-    slackUserId: report.slackUserId,
-    channel: report.channel,
-    ts: report.ts,
-    date,
-    items: shown,
-    noAccess: [...noAccess],
-    unmatched,
-    extra,
-    status: "pending",
-    createdAt: Date.now(),
-  };
-  const posted = await dm(eodReviewView({ review, source: link, urls }));
-  Object.assign(review, { dmChannel: posted.channel, dmTs: posted.ts });
-  store.data.reviews[review.id] = review;
   await store.save();
 }
 

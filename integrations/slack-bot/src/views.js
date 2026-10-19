@@ -428,7 +428,7 @@ export function eodReviewView({ review, source, urls }) {
         .join(", ")}${review.unmatched.length > 5 ? "…" : ""}`,
     );
   const before = [
-    header(`Your EOD  ·  ${prettyDate(review.date)}`),
+    header(`Your EOD  ·  ${prettyDate(review.date)}${review.part ? `  ·  ${review.part.index}/${review.part.of}` : ""}`),
     context(
       `${review.items.length} item${review.items.length === 1 ? "" : "s"} in ${projects.size} project${projects.size === 1 ? "" : "s"}  ·  from your ${source}`,
     ),

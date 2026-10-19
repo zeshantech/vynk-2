@@ -21,8 +21,13 @@ const ITEM_SCHEMA = {
       description: "Time spent in hours only if the message states it for this item, else null. Never guess.",
     },
     notes: { type: "string", description: "Extra detail worth keeping as the time entry comment (may be empty)." },
+    date: {
+      type: ["string", "null"],
+      description:
+        "Day this item was done as YYYY-MM-DD: the date heading it is listed under (e.g. 'Monday, October 12, 2026'), else null.",
+    },
   },
-  required: ["project_id", "project_mention", "title", "existing_task_id", "hours", "notes"],
+  required: ["project_id", "project_mention", "title", "existing_task_id", "hours", "notes", "date"],
 };
 
 const RESULT_SCHEMA = {
@@ -36,21 +41,23 @@ const RESULT_SCHEMA = {
     },
     date: { type: ["string", "null"], description: "Day the work was done as YYYY-MM-DD if the message states one, else null." },
     items: { type: "array", description: "Each distinct piece of work DONE (not planned, not blockers).", items: ITEM_SCHEMA },
-    project_hours: {
+    hours_groups: {
       type: "array",
-      description: "Durations written for a whole project section (e.g. 'PRI ~5hrs:'), not for a single item.",
+      description:
+        "Durations written for a group of items rather than one item: a project section ('PRI ~5hrs:'), a day ('Monday 8h') or the whole report ('Oct 12-16, 40h').",
       items: {
         type: "object",
         additionalProperties: false,
         properties: {
-          project_id: { type: ["integer", "null"], description: "id of the project the duration is for, or null." },
-          hours: { type: "number", description: "Total hours written for that project." },
+          project_id: { type: ["integer", "null"], description: "Project the duration is for, or null if it spans projects." },
+          date: { type: ["string", "null"], description: "Day (YYYY-MM-DD) the duration is for, or null if it spans days." },
+          hours: { type: "number", description: "Total hours written for that group." },
         },
-        required: ["project_id", "hours"],
+        required: ["project_id", "date", "hours"],
       },
     },
   },
-  required: ["is_eod", "date", "items", "project_hours"],
+  required: ["is_eod", "date", "items", "hours_groups"],
 };
 
 const SYSTEM = `You turn Slack end-of-day (EOD) reports into time-tracking items for a project management tool.
@@ -62,7 +69,8 @@ Rules:
   Work for a company in general (not a specific product) belongs to the parent company's own project.
   If several projects fit equally, or none fits, use null.
 - Prefer an existing task when it is clearly the same work; otherwise null so a new task is created.
-- Do not invent hours. Only copy durations written in the message. A duration written on a project heading belongs in project_hours, not on the items.
+- Do not invent hours. Only copy durations written in the message. A duration written on a project heading, a day heading or the report title belongs in hours_groups, not on the items.
+- Reports may cover several days. Give every item the date of the day heading it is listed under.
 - Keep titles short and clean (no bullets, emojis, links or durations).`;
 
 export class EodReader {
@@ -96,7 +104,7 @@ export class EodReader {
     const completion = await this.client.chat.completions.create({
       model: this.model,
       temperature: 0,
-      max_completion_tokens: 4000,
+      max_completion_tokens: 12000,
       response_format: { type: "json_schema", json_schema: { name: "eod_report", strict: true, schema: RESULT_SCHEMA } },
       messages: [
         { role: "system", content: SYSTEM },
@@ -129,12 +137,18 @@ function sanitize(result, projects, tasks) {
         taskSubject: task && task.projectId === projectId ? task.subject : null,
         hours: Number.isFinite(hours) && hours > 0 && hours <= 24 ? Math.round(hours * 100) / 100 : null,
         notes: String(i.notes ?? "").slice(0, 500),
+        date: typeof i.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(i.date) ? i.date : null,
       };
     })
     .filter((i) => i.title.length >= 2);
   const date = /^\d{4}-\d{2}-\d{2}$/.test(result?.date ?? "") ? result.date : null;
-  const projectHours = (Array.isArray(result?.project_hours) ? result.project_hours : [])
-    .filter((h) => projectIds.has(h.project_id) && Number(h.hours) > 0 && Number(h.hours) <= 24)
-    .map((h) => ({ projectId: h.project_id, hours: Math.round(Number(h.hours) * 100) / 100 }));
-  return { isEod: Boolean(result?.is_eod) && items.length > 0, date, items, projectHours };
+  const isDate = (d) => typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d);
+  const hoursGroups = (Array.isArray(result?.hours_groups) ? result.hours_groups : [])
+    .filter((g) => (g.project_id === null || projectIds.has(g.project_id)) && Number(g.hours) > 0 && Number(g.hours) <= 24 * 31)
+    .map((g) => ({
+      projectId: g.project_id ?? null,
+      date: isDate(g.date) ? g.date : null,
+      hours: Math.round(Number(g.hours) * 100) / 100,
+    }));
+  return { isEod: Boolean(result?.is_eod) && items.length > 0, date, items, hoursGroups };
 }
