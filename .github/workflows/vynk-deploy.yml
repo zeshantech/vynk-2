@@ -63,11 +63,11 @@ jobs:
           SCP="sshpass -e scp $OPTS"
           $SSH "$TARGET" "mkdir -p ~/vynk-op && chmod 700 ~/vynk-op"
           $SCP deploy/docker-compose.yml deploy/nginx.conf deploy/.env deploy/vynk-theme.tgz "$TARGET":~/vynk-op/
-          $SSH "$TARGET" "cd ~/vynk-op && chmod 600 .env && rm -rf vynk-theme && tar -xzf vynk-theme.tgz && rm vynk-theme.tgz"
+          $SSH "$TARGET" "cd ~/vynk-op && chmod 600 .env && mkdir -p vynk-theme && tar -xzf vynk-theme.tgz && rm vynk-theme.tgz"
           if [ "${STOP_PLANE:-}" = "true" ]; then
             $SSH "$TARGET" "if [ -f ~/vynk/docker-compose.yml ]; then cd ~/vynk && docker compose down --remove-orphans || true; fi"
           fi
-          $SSH "$TARGET" "cd ~/vynk-op && (for i in 1 2 3; do docker compose pull && break || sleep 15; done) && docker compose up -d --remove-orphans && docker compose exec -T proxy nginx -s reload || true"
+          $SSH "$TARGET" "cd ~/vynk-op && (for i in 1 2 3; do docker compose pull && break || sleep 15; done) && docker compose up -d --remove-orphans && docker compose up -d --force-recreate --no-deps proxy"
 
       - name: Health check (first start runs migrations; can take several minutes)
         run: |
