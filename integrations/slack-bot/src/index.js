@@ -3,7 +3,8 @@ import http from "node:http";
 import bolt from "@slack/bolt";
 import { NotSignedInError, OpenProject, OpenProjectError } from "./openproject.js";
 import { Sessions, resultPage } from "./auth.js";
-import { matchTask, parseEod } from "./eod.js";
+import { cleanSlackText, matchTask, normalize, parseEod } from "./eod.js";
+import { EodReader } from "./llm.js";
 import { Store } from "./store.js";
 import { parseCreateTask, parseLogTime } from "./commands.js";
 import {
@@ -54,6 +55,7 @@ const sessions = new Sessions({
   dataDir: process.env.DATA_DIR || "/data",
 });
 const store = new Store(process.env.DATA_DIR || "/data");
+const eodReader = new EodReader({ apiKey: process.env.ANTHROPIC_API_KEY, model: process.env.EOD_MODEL || "claude-sonnet-5-5" });
 
 const app = new App({
   token: env("SLACK_BOT_TOKEN"),
@@ -914,23 +916,47 @@ async function handleEodMessage(message, client) {
   const msg = message.subtype === "message_changed" ? { ...message.message, channel: message.channel } : message;
   if (!msg?.user || msg.bot_id || (msg.subtype && !["file_share", "thread_broadcast"].includes(msg.subtype))) return;
   if (msg.thread_ts && msg.thread_ts !== msg.ts && msg.subtype !== "thread_broadcast") return;
-  const text = msg.text ?? "";
-  if (text.trim().length < 8) return;
+  const text = cleanSlackText(msg.text ?? "").trim();
+  if (text.length < 15) return;
   if (!(await isEodChannel(client, msg.channel))) return;
-
-  const projects = await cached("projects:all", 5 * 60_000, () => op.projects());
-  const parsed = parseEod(text, projects, { today: dateOfTs(msg.ts), inEodChannel: true });
-  if (!parsed.isEod) return;
   if (!(await store.firstTime(`${msg.channel}:${msg.ts}`))) return;
+  await startEodReview(client, { slackUserId: msg.user, channel: msg.channel, ts: msg.ts, text, createdAt: Date.now() });
+}
 
-  await startEodReview(client, {
-    slackUserId: msg.user,
-    channel: msg.channel,
-    ts: msg.ts,
-    date: parsed.date ?? dateOfTs(msg.ts),
-    parsed,
-    createdAt: Date.now(),
-  });
+/** Claude decides what the report contains; the rule-based parser is only a fallback. */
+async function readEod({ user, report, mine }) {
+  const all = await cached("projects:all", 5 * 60_000, () => op.projects());
+  const projects = all.map((p) => ({ ...p, member: mine.has(p.id) }));
+  for (const p of mine.values()) if (!projects.some((x) => x.id === p.id)) projects.push({ ...p, member: true });
+  const today = dateOfTs(report.ts);
+
+  if (eodReader.enabled) {
+    const text = ` ${normalize(report.text)} `;
+    const named = [...mine.values()].filter((p) => [p.name, p.identifier].some((k) => normalize(k) && text.includes(` ${normalize(k)} `)));
+    const candidates = (named.length ? named : mine.size <= 5 ? [...mine.values()] : []).slice(0, 10);
+    const tasks = [];
+    for (const p of candidates) {
+      const list = await cached(`tasks:${user.id}:${p.id}`, 30_000, () => user.api.projectTasks(p.id)).catch(() => []);
+      tasks.push(...list.slice(0, 60).map((t) => ({ id: t.id, subject: t.subject, projectId: p.id })));
+    }
+    try {
+      return await eodReader.read({ text: report.text, projects, tasks, today });
+    } catch (err) {
+      app.logger.error("Claude could not read the EOD, using the rule-based parser", err);
+    }
+  }
+
+  const parsed = parseEod(report.text, projects, { today, inEodChannel: true });
+  return {
+    isEod: parsed.isEod,
+    date: parsed.date,
+    items: [
+      ...parsed.sections.flatMap((s) =>
+        s.items.map((i) => ({ projectId: s.project?.id ?? null, mention: s.heading, title: i.text, hours: i.hours, notes: "" })),
+      ),
+      ...parsed.unassigned.map((i) => ({ projectId: null, mention: "", title: i.text, hours: i.hours, notes: "" })),
+    ],
+  };
 }
 
 async function startEodReview(client, report) {
@@ -954,27 +980,30 @@ async function startEodReview(client, report) {
   }
 
   const mine = new Map((await user.api.projectsFor(user)).map((p) => [p.id, p]));
+  const result = await readEod({ user, report, mine });
+  if (!result.isEod) return;
+  const date = result.date && result.date <= dateOfTs(report.ts) ? result.date : dateOfTs(report.ts);
+
+  const all = await cached("projects:all", 5 * 60_000, () => op.projects());
   const items = [];
-  const noAccess = [];
-  const unmatched = [...report.parsed.unassigned.map((i) => i.text)];
-  for (const section of report.parsed.sections) {
-    if (!section.project) unmatched.push(...section.items.map((i) => `${section.heading}: ${i.text}`));
-    else if (!mine.has(section.project.id)) noAccess.push(section.project.name);
-    else
-      for (const item of section.items)
-        items.push({ projectId: section.project.id, projectName: mine.get(section.project.id).name, ...item });
+  const noAccess = new Set();
+  const unmatched = [];
+  for (const item of result.items) {
+    if (!item.projectId) unmatched.push(item.mention ? `${item.mention}: ${item.title}` : item.title);
+    else if (!mine.has(item.projectId)) noAccess.add(all.find((p) => p.id === item.projectId)?.name ?? item.mention);
+    else items.push({ ...item, text: item.title, projectName: mine.get(item.projectId).name });
   }
 
   if (!items.length) {
-    await dm(eodNothingView({ source: link, noAccess, unmatched, date: report.date }));
+    await dm(eodNothingView({ source: link, noAccess: [...noAccess], unmatched, date }));
     return;
   }
 
   const extra = Math.max(0, items.length - MAX_EOD_ITEMS);
   const shown = items.slice(0, MAX_EOD_ITEMS);
-  for (const projectId of new Set(shown.map((i) => i.projectId))) {
+  for (const projectId of new Set(shown.filter((i) => !i.taskId).map((i) => i.projectId))) {
     const tasks = await cached(`tasks:${user.id}:${projectId}`, 30_000, () => user.api.projectTasks(projectId)).catch(() => []);
-    for (const item of shown.filter((i) => i.projectId === projectId)) {
+    for (const item of shown.filter((i) => i.projectId === projectId && !i.taskId)) {
       const task = matchTask(item.text, tasks);
       if (task) Object.assign(item, { taskId: task.id, taskSubject: task.subject });
     }
@@ -985,9 +1014,9 @@ async function startEodReview(client, report) {
     slackUserId: report.slackUserId,
     channel: report.channel,
     ts: report.ts,
-    date: report.date,
+    date,
     items: shown,
-    noAccess,
+    noAccess: [...noAccess],
     unmatched,
     extra,
     status: "pending",
@@ -1090,7 +1119,7 @@ app.view("eod_log", async ({ ack, body, view, client, logger }) => {
       activityId: Number(values[`e${n}_act`]?.value.selected_option?.value) || null,
       hours: parseHours(raw),
       spentOn,
-      comment: review?.items[index]?.text ?? "",
+      comment: review?.items[index]?.notes || review?.items[index]?.text || "",
     });
   });
   if (!review || review.status !== "pending") errors.date = "This EOD was already logged or has expired.";
