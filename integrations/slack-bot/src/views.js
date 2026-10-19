@@ -375,7 +375,7 @@ export function eodReviewView({ review, source, urls }) {
   }
   const notes = [];
   if (review.extra) notes.push(`+${review.extra} more item${review.extra === 1 ? "" : "s"} not shown (max 15 per EOD).`);
-  if (review.noAccess.length) notes.push(`Skipped, you're not a member: ${review.noAccess.map(escape).join(", ")}.`);
+  if (review.noAccess.length) notes.push(`Skipped, you can't log time in: ${review.noAccess.map(escape).join(", ")}.`);
   if (review.unmatched.length)
     notes.push(
       `No Vynk project found for: ${review.unmatched
@@ -407,7 +407,8 @@ export function eodReviewView({ review, source, urls }) {
 
 export function eodNothingView({ source, noAccess, unmatched, date }) {
   const lines = [];
-  if (noAccess.length) lines.push(`You're not a member of: *${noAccess.map(escape).join(", ")}*. Ask an admin to add you.`);
+  if (noAccess.length)
+    lines.push(`You can't log time in: *${noAccess.map(escape).join(", ")}*. Ask a project admin for a role that allows logging time.`);
   if (unmatched.length)
     lines.push(
       `No Vynk project matched: ${unmatched

@@ -142,6 +142,23 @@ export class OpenProject {
     });
   }
 
+  /** Ids of projects where the user may do any of the given actions (e.g. "time_entries/create_own"). */
+  async capabilityProjects(userId, actions) {
+    const data = await this.request(
+      "GET",
+      `/api/v3/capabilities?pageSize=1000&filters=${filters([
+        { principal: { operator: "=", values: [String(userId)] } },
+        { action: { operator: "=", values: actions } },
+      ])}`,
+    );
+    const ids = new Set();
+    for (const c of data?._embedded?.elements ?? []) {
+      const href = c._links?.context?.href ?? "";
+      if (href.includes("/projects/")) ids.add(idFromHref(href));
+    }
+    return ids;
+  }
+
   /** Roles that can be given to project members (e.g. Project admin, Member, Reader). */
   async projectRoles() {
     const data = await this.request(

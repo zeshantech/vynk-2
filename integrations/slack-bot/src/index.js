@@ -536,16 +536,18 @@ async function logEntries(user, entries) {
           })
         : null;
       if (!wp) {
-        wp = await user.api.createTask({ projectId: e.projectId, subject: e.newTask, assigneeId: user.id });
+        wp = await user.api.createTask({ projectId: e.projectId, subject: e.newTask, assigneeId: user.id }).catch(noCreateRights);
         created.push("new task");
       }
       if (e.subtask) {
-        wp = await user.api.createTask({
-          projectId: e.projectId ?? idFromLink(wp._links?.project),
-          subject: e.subtask,
-          assigneeId: user.id,
-          parentId: wp.id,
-        });
+        wp = await user.api
+          .createTask({
+            projectId: e.projectId ?? idFromLink(wp._links?.project),
+            subject: e.subtask,
+            assigneeId: user.id,
+            parentId: wp.id,
+          })
+          .catch(noCreateRights);
         created.push("new subtask");
       }
       const entry = await op
@@ -587,6 +589,11 @@ async function logEntries(user, entries) {
     : note;
 }
 
+const noCreateRights = (err) => {
+  if (err.status === 403) throw new UserFacingError("You can't create tasks in this project. Pick an existing task instead.");
+  throw err;
+};
+
 const idFromLink = (link) => (link?.href ? Number(link.href.split("/").pop()) : null);
 
 const cache = new Map();
@@ -601,13 +608,46 @@ async function cached(key, ttlMs, load) {
 const option = (text, value) => ({ text: { type: "plain_text", text: String(text).slice(0, 75) }, value: String(value).slice(0, 150) });
 const plain = (text) => ({ type: "plain_text", text });
 
+const LOG_TIME_ACTIONS = ["time_entries/create_own", "time_entries/create"];
+const CREATE_TASK_ACTIONS = ["work_packages/create"];
+
+/** What the user may do per project, from Vynk's permissions. Admins may do everything (null = all). */
+async function permissions(user) {
+  if (user.admin) return { logTime: null, createTask: null };
+  return cached(`perms:${user.id}`, 60_000, async () => {
+    const [logTime, createTask] = await Promise.all([
+      op.capabilityProjects(user.id, LOG_TIME_ACTIONS),
+      op.capabilityProjects(user.id, CREATE_TASK_ACTIONS),
+    ]);
+    return { logTime, createTask };
+  });
+}
+
+const allowed = (set, projectId) => set === null || set.has(projectId);
+
+/** Projects the user is in, split into ones they can log time in and the rest. */
+async function loggableProjects(user) {
+  const [projects, perms] = await Promise.all([cached(`projects:${user.id}`, 60_000, () => user.api.projectsFor(user)), permissions(user)]);
+  return {
+    projects: projects.filter((p) => allowed(perms.logTime, p.id)),
+    hidden: projects.filter((p) => !allowed(perms.logTime, p.id)),
+    perms,
+  };
+}
+
 async function logTimeData(user, projectId) {
-  const projects = await cached(`projects:${user.id}`, 60_000, () => user.api.projectsFor(user));
-  if (!projects.length) throw new UserFacingError("You're not a member of any project yet. Ask an admin to add you.");
-  const id = projectId ?? (projects.length === 1 ? projects[0].id : null);
-  const activities = id ? await cached(`activities:${user.id}:${id}`, 300_000, () => user.api.activities(id)) : [];
+  const { projects, hidden, perms } = await loggableProjects(user);
+  if (!projects.length) {
+    throw new UserFacingError(
+      hidden.length
+        ? `You can't log time in your projects (${hidden.map((p) => p.name).join(", ")}). You may only have Reader access; ask a project admin to change your role.`
+        : "You're not a member of any project yet. Ask an admin to add you.",
+    );
+  }
+  const id = projects.some((p) => p.id === projectId) ? projectId : projects.length === 1 ? projects[0].id : null;
+  const activities = id ? await cached(`activities:${user.id}:${id}`, 300_000, () => user.api.activities(id)).catch(() => []) : [];
   if (id) cached(`tasks:${user.id}:${id}`, 30_000, () => user.api.projectTasks(id)).catch(() => null);
-  return { projects, projectId: id, activities };
+  return { projects, hidden, projectId: id, activities, canCreateTask: id ? allowed(perms.createTask, id) : true };
 }
 
 /** Current form values by block id, so they survive re-rendering the form. */
@@ -620,7 +660,7 @@ function formState(values = {}) {
   return out;
 }
 
-function logTimeView({ projects, projectId, activities }, meta, prev = {}) {
+function logTimeView({ projects, hidden = [], projectId, activities, canCreateTask = true }, meta, prev = {}) {
   const count = Math.min(Math.max(meta.count ?? 1, 1), MAX_ENTRIES);
   const project = projects.find((p) => p.id === projectId);
   const text = (id) => (prev[id]?.text ? { initial_value: prev[id].text } : {});
@@ -640,6 +680,12 @@ function logTimeView({ projects, projectId, activities }, meta, prev = {}) {
     },
     input("date", "Date", { type: "datepicker", initial_date: prev.date?.date ?? todayIn(TZ) }),
   ];
+  if (hidden.length) {
+    blocks.splice(1, 0, {
+      type: "context",
+      elements: [{ type: "mrkdwn", text: `Not shown, you can't log time there: ${hidden.map((p) => escape(p.name)).join(", ")}` }],
+    });
+  }
 
   if (!projectId) {
     blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: "Choose a project to add time entries." }] });
@@ -653,7 +699,11 @@ function logTimeView({ projects, projectId, activities }, meta, prev = {}) {
           type: "input",
           block_id: `e${n}_task`,
           label: plain("Task"),
-          hint: plain("Search your project's tasks, or type a name to create a new one"),
+          hint: plain(
+            canCreateTask
+              ? "Search your project's tasks, or type a name to create a new one"
+              : "Search this project's tasks (you can't create new tasks here)",
+          ),
           element: {
             type: "external_select",
             action_id: "lt_task",
@@ -725,10 +775,25 @@ async function refreshLogTimeView({ body, client, logger }, change) {
     const next = change(meta, prev);
     const user = await vynkUser(client, body.user.id);
     const data = await logTimeData(user, next.projectId);
-    await client.views.update({ view_id: body.view.id, hash: body.view.hash, view: logTimeView(data, next, prev) });
+    const view = logTimeView(data, next, prev);
+    await client.views.update({ view_id: body.view.id, hash: body.view.hash, view }).catch((err) => {
+      // Another update landed first (e.g. a quick second click): ours is newer, so apply it anyway.
+      if (err?.data?.error === "hash_conflict") return client.views.update({ view_id: body.view.id, view });
+      throw err;
+    });
   } catch (err) {
-    if (err?.data?.error === "hash_conflict") return;
-    logger.error("log time refresh failed", err);
+    if (!(err instanceof UserFacingError)) logger.error("log time refresh failed", err);
+    await client.views
+      .update({
+        view_id: body.view.id,
+        view: {
+          type: "modal",
+          title: plain("Log time"),
+          close: plain("Close"),
+          blocks: [{ type: "section", text: { type: "mrkdwn", text: errorText(err) } }],
+        },
+      })
+      .catch(() => null);
   }
 }
 
@@ -767,7 +832,9 @@ app.options("lt_task", async ({ ack, body }) => {
       .filter((t) => !needle || t.subject.toLowerCase().includes(needle))
       .slice(0, 99)
       .map((t) => option(t.subject, `wp:${t.id}`));
-    if (query && !tasks.some((t) => t.subject.toLowerCase() === needle)) options.unshift(option(`+ New task: ${query}`, `new:${query}`));
+    const canCreate = projectId ? allowed((await permissions(user)).createTask, projectId) : false;
+    if (canCreate && query && !tasks.some((t) => t.subject.toLowerCase() === needle))
+      options.unshift(option(`+ New task: ${query}`, `new:${query}`));
     await ack({ options });
   } catch (err) {
     app.logger.error("task search failed", err);
@@ -1122,7 +1189,8 @@ async function startEodReview(client, report) {
     throw err;
   }
 
-  const mine = new Map((await user.api.projectsFor(user)).map((p) => [p.id, p]));
+  const { projects: loggable, perms } = await loggableProjects(user);
+  const mine = new Map(loggable.map((p) => [p.id, p]));
   const result = await readEod({ user, report, mine });
   if (!result.isEod) return;
   const date = result.date && result.date <= dateOfTs(report.ts) ? result.date : dateOfTs(report.ts);
