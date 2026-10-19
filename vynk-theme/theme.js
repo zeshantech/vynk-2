@@ -134,3 +134,14 @@ function vkLoadOpenSubmenus() {
 ["DOMContentLoaded", "turbo:load", "turbo:render"].forEach((e) => document.addEventListener(e, vkLoadOpenSubmenus));
 new MutationObserver(vkLoadOpenSubmenus).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });
 vkLoadOpenSubmenus();
+
+// Brand text on signed-out account pages: "OpenProject" -> "Vynk" in the page heading
+function vkBrandText() {
+  document
+    .querySelectorAll("body.controller-account .op-account-registration--subtitle, body.controller-account #content-body h1, body.controller-account #login-form h1")
+    .forEach((el) => {
+      if (el.textContent.includes("OpenProject")) el.textContent = el.textContent.replace(/OpenProject/g, "Vynk");
+    });
+}
+["DOMContentLoaded", "turbo:load", "turbo:render"].forEach((e) => document.addEventListener(e, vkBrandText));
+vkBrandText();
