@@ -22,6 +22,8 @@ Slack users are matched to Vynk users by email. People can only log time in proj
 3. In Vynk as admin: avatar → **My account → Access tokens → API → + API token** (`OPENPROJECT_API_KEY`).
 4. Add to Infisical (`/vynk-op`): `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `OPENPROJECT_API_KEY`. Push/redeploy — the bot starts automatically when `SLACK_BOT_TOKEN` exists.
 
+EOD reports: invite the bot to the EOD channel (`/invite @Vynk`). Channels come from `EOD_CHANNELS` (default `eod-updates,test-vynk`). Each EOD is matched to the author's projects and sent back to them privately to add time and approve.
+
 Optional: `BOT_TIMEZONE` (default `Asia/Karachi`), weekly DM reminder `REMINDER_DAY=fri`, `REMINDER_TIME=17:00`, `REMINDER_MIN_HOURS=40`.
 
 Local run: `npm install && OPENPROJECT_URL=… OPENPROJECT_API_KEY=… SLACK_BOT_TOKEN=… SLACK_APP_TOKEN=… npm start`. Tests: `npm test`.

@@ -41,6 +41,7 @@ services:
       OPENPROJECT_OAUTH_CLIENT_ID: ${OPENPROJECT_OAUTH_CLIENT_ID:-}
       OPENPROJECT_OAUTH_CLIENT_SECRET: ${OPENPROJECT_OAUTH_CLIENT_SECRET:-}
       BOT_PUBLIC_URL: ${BOT_PUBLIC_URL:-https://${OPENPROJECT_HOST__NAME}}
+      EOD_CHANNELS: ${EOD_CHANNELS:-eod-updates,test-vynk}
     volumes:
       - slack_data:/data
 

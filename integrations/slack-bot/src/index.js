@@ -1,7 +1,10 @@
+import crypto from "node:crypto";
 import http from "node:http";
 import bolt from "@slack/bolt";
 import { NotSignedInError, OpenProject, OpenProjectError } from "./openproject.js";
 import { Sessions, resultPage } from "./auth.js";
+import { matchTask, parseEod } from "./eod.js";
+import { Store } from "./store.js";
 import { parseCreateTask, parseLogTime } from "./commands.js";
 import {
   MAX_HOURS_PER_DAY,
@@ -14,7 +17,21 @@ import {
   todayIn,
   weekContaining,
 } from "./time.js";
-import { connectView, loggedView, menuView, prettyDate, projectsView, tasksView, teamView, weekView } from "./views.js";
+import {
+  connectView,
+  eodConnectView,
+  eodDismissedView,
+  eodDoneView,
+  eodNothingView,
+  eodReviewView,
+  loggedView,
+  menuView,
+  prettyDate,
+  projectsView,
+  tasksView,
+  teamView,
+  weekView,
+} from "./views.js";
 
 const { App, LogLevel } = bolt;
 
@@ -36,6 +53,7 @@ const sessions = new Sessions({
   redirectUri: `${PUBLIC_URL}/__slack/oauth/callback`,
   dataDir: process.env.DATA_DIR || "/data",
 });
+const store = new Store(process.env.DATA_DIR || "/data");
 
 const app = new App({
   token: env("SLACK_BOT_TOKEN"),
@@ -129,7 +147,7 @@ function errorText(err) {
 
 /** Sends a reply; if Slack rejects the table block, resends with the monospace fallback. */
 async function deliver(send, msg) {
-  const { fallback, ...main } = msg;
+  const { fallback, failed, ...main } = msg;
   if (!fallback) return send(main);
   try {
     const res = await send(main);
@@ -419,7 +437,9 @@ async function logEntries(user, entries) {
   if (!failure) return view;
   if (!(failure instanceof UserFacingError)) app.logger.error("logging entry failed", failure);
   const note = `${errorText(failure)}${results.length ? ` (${results.length} of ${entries.length} saved)` : ""}`;
-  return results.length ? { ...view, blocks: [...view.blocks, { type: "context", elements: [{ type: "mrkdwn", text: note }] }] } : note;
+  return results.length
+    ? { ...view, failed: true, blocks: [...view.blocks, { type: "context", elements: [{ type: "mrkdwn", text: note }] }] }
+    : note;
 }
 
 const idFromLink = (link) => (link?.href ? Number(link.href.split("/").pop()) : null);
@@ -591,7 +611,9 @@ app.action("lt_remove", async ({ ack, body, client, logger }) => {
 
 app.options("lt_task", async ({ ack, body }) => {
   try {
-    const { projectId } = JSON.parse(body.view?.private_metadata || "{}");
+    const meta = JSON.parse(body.view?.private_metadata || "{}");
+    const entryIndex = Number(String(body.block_id ?? "").match(/^e(\d+)_/)?.[1] ?? 0) - 1;
+    const projectId = meta.entries ? meta.entries[entryIndex]?.projectId : meta.projectId;
     const query = String(body.value ?? "").trim();
     const user = await vynkUser(app.client, body.user.id);
     const tasks = projectId ? await cached(`tasks:${user.id}:${projectId}`, 30_000, () => user.api.projectTasks(projectId)) : [];
@@ -749,6 +771,10 @@ app.event("app_mention", async ({ event, client, logger }) => {
 });
 
 app.message(async ({ message, say, client, logger }) => {
+  if (message.channel_type === "channel" || message.channel_type === "group") {
+    await handleEodMessage(message, client).catch((err) => logger.error("EOD handling failed", err));
+    return;
+  }
   if (message.channel_type !== "im" || message.subtype || message.bot_id) return;
   try {
     await say(await menuMessage(client, message.user));
@@ -860,6 +886,262 @@ function startReminderLoop() {
   app.logger.info(`Weekly reminder: ${REMINDER_DAY} ${REMINDER_TIME} ${TZ}, under ${REMINDER_MIN_HOURS}h`);
 }
 
+// ---------- EOD reports ----------
+// A report posted in an EOD channel becomes a private review card for its author. On approval the
+// author adds the time per item and the bot creates/uses tasks and logs the time as them.
+
+const EOD_CHANNELS = (process.env.EOD_CHANNELS || "eod-updates")
+  .split(",")
+  .map((s) => s.trim().replace(/^#/, "").toLowerCase())
+  .filter(Boolean);
+const MAX_EOD_ITEMS = 15;
+const channelNames = new Map();
+
+async function isEodChannel(client, channelId) {
+  if (EOD_CHANNELS.includes(channelId.toLowerCase())) return true;
+  if (!channelNames.has(channelId)) {
+    const info = await client.conversations.info({ channel: channelId }).catch(() => null);
+    channelNames.set(channelId, info?.channel?.name?.toLowerCase() ?? "");
+  }
+  return EOD_CHANNELS.includes(channelNames.get(channelId));
+}
+
+const dateOfTs = (ts) =>
+  new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(Number(ts) * 1000));
+const permalink = (channel, ts) => `https://slack.com/archives/${channel}/p${String(ts).replace(".", "")}`;
+
+async function handleEodMessage(message, client) {
+  const msg = message.subtype === "message_changed" ? { ...message.message, channel: message.channel } : message;
+  if (!msg?.user || msg.bot_id || (msg.subtype && !["file_share", "thread_broadcast"].includes(msg.subtype))) return;
+  if (msg.thread_ts && msg.thread_ts !== msg.ts && msg.subtype !== "thread_broadcast") return;
+  const text = msg.text ?? "";
+  if (text.trim().length < 8) return;
+  if (!(await isEodChannel(client, msg.channel))) return;
+
+  const projects = await cached("projects:all", 5 * 60_000, () => op.projects());
+  const parsed = parseEod(text, projects, { today: dateOfTs(msg.ts), inEodChannel: true });
+  if (!parsed.isEod) return;
+  if (!(await store.firstTime(`${msg.channel}:${msg.ts}`))) return;
+
+  await startEodReview(client, {
+    slackUserId: msg.user,
+    channel: msg.channel,
+    ts: msg.ts,
+    date: parsed.date ?? dateOfTs(msg.ts),
+    parsed,
+    createdAt: Date.now(),
+  });
+}
+
+async function startEodReview(client, report) {
+  const dm = (msg) => client.chat.postMessage({ channel: report.slackUserId, ...msg });
+  const link = `<${permalink(report.channel, report.ts)}|EOD>`;
+  let user;
+  try {
+    user = await vynkUser(client, report.slackUserId);
+  } catch (err) {
+    if (err instanceof NotConnectedError || err instanceof NotSignedInError) {
+      store.data.waiting[report.slackUserId] = report;
+      await store.save();
+      await dm(eodConnectView({ url: sessions.connectUrl(report.slackUserId), source: link }));
+      return;
+    }
+    if (err instanceof UserFacingError) {
+      await dm({ text: `I saw your ${link} but couldn't log it: ${err.message}` });
+      return;
+    }
+    throw err;
+  }
+
+  const mine = new Map((await user.api.projectsFor(user)).map((p) => [p.id, p]));
+  const items = [];
+  const noAccess = [];
+  const unmatched = [...report.parsed.unassigned.map((i) => i.text)];
+  for (const section of report.parsed.sections) {
+    if (!section.project) unmatched.push(...section.items.map((i) => `${section.heading}: ${i.text}`));
+    else if (!mine.has(section.project.id)) noAccess.push(section.project.name);
+    else
+      for (const item of section.items)
+        items.push({ projectId: section.project.id, projectName: mine.get(section.project.id).name, ...item });
+  }
+
+  if (!items.length) {
+    await dm(eodNothingView({ source: link, noAccess, unmatched, date: report.date }));
+    return;
+  }
+
+  const extra = Math.max(0, items.length - MAX_EOD_ITEMS);
+  const shown = items.slice(0, MAX_EOD_ITEMS);
+  for (const projectId of new Set(shown.map((i) => i.projectId))) {
+    const tasks = await cached(`tasks:${user.id}:${projectId}`, 30_000, () => user.api.projectTasks(projectId)).catch(() => []);
+    for (const item of shown.filter((i) => i.projectId === projectId)) {
+      const task = matchTask(item.text, tasks);
+      if (task) Object.assign(item, { taskId: task.id, taskSubject: task.subject });
+    }
+  }
+
+  const review = {
+    id: crypto.randomUUID(),
+    slackUserId: report.slackUserId,
+    channel: report.channel,
+    ts: report.ts,
+    date: report.date,
+    items: shown,
+    noAccess,
+    unmatched,
+    extra,
+    status: "pending",
+    createdAt: Date.now(),
+  };
+  const posted = await dm(eodReviewView({ review, source: link, urls }));
+  Object.assign(review, { dmChannel: posted.channel, dmTs: posted.ts });
+  store.data.reviews[review.id] = review;
+  await store.save();
+}
+
+app.action("eod_review", async ({ ack, body, action, client }) => {
+  await ack();
+  const review = store.data.reviews[action.value];
+  await openForm(client, body.trigger_id, "Log your EOD", async () => {
+    if (!review) throw new UserFacingError("This EOD review has expired. Post a new EOD or use Log time.");
+    if (review.status !== "pending") throw new UserFacingError("You've already logged this EOD.");
+    if (review.slackUserId !== body.user.id) throw new UserFacingError("This EOD belongs to someone else.");
+    const user = await vynkUser(client, body.user.id);
+    const activities = new Map();
+    for (const projectId of new Set(review.items.map((i) => i.projectId))) {
+      activities.set(projectId, await cached(`activities:${user.id}:${projectId}`, 300_000, () => user.api.activities(projectId)));
+    }
+    const blocks = [
+      input("date", "Date", { type: "datepicker", initial_date: review.date }),
+      { type: "context", elements: [{ type: "mrkdwn", text: "Add the time you spent on each item. Leave it empty to skip an item." }] },
+    ];
+    review.items.forEach((item, index) => {
+      const n = index + 1;
+      const acts = activities.get(item.projectId) ?? [];
+      blocks.push(
+        { type: "divider" },
+        { type: "context", elements: [{ type: "mrkdwn", text: `*${escape(item.projectName)}*  ·  ${escape(item.text).slice(0, 150)}` }] },
+        {
+          type: "input",
+          block_id: `e${n}_task`,
+          label: plain("Task"),
+          element: {
+            type: "external_select",
+            action_id: "lt_task",
+            min_query_length: 0,
+            placeholder: plain("Search or type a new task"),
+            initial_option: item.taskId
+              ? option(item.taskSubject, `wp:${item.taskId}`)
+              : option(`+ New task: ${item.text}`, `new:${item.text}`),
+          },
+        },
+        input(
+          `e${n}_hours`,
+          "Time spent",
+          {
+            type: "plain_text_input",
+            placeholder: plain("e.g. 2h, 1h30m or 1.5"),
+            ...(item.hours ? { initial_value: formatHours(item.hours).replace(" ", "") } : {}),
+          },
+          true,
+        ),
+        ...(acts.length
+          ? [
+              input(
+                `e${n}_act`,
+                "Activity",
+                { type: "static_select", placeholder: plain("What kind of work?"), options: acts.map((a) => option(a.name, a.id)) },
+                true,
+              ),
+            ]
+          : []),
+      );
+    });
+    return {
+      callbackId: "eod_log",
+      submit: "Log time",
+      blocks,
+      privateMetadata: JSON.stringify({ reviewId: review.id, entries: review.items.map((i) => ({ projectId: i.projectId })) }),
+    };
+  });
+});
+
+app.view("eod_log", async ({ ack, body, view, client, logger }) => {
+  const values = view.state.values;
+  const meta = JSON.parse(view.private_metadata || "{}");
+  const review = store.data.reviews[meta.reviewId];
+  const spentOn = values.date?.value.selected_date;
+  const errors = {};
+  const entries = [];
+  (meta.entries ?? []).forEach(({ projectId }, index) => {
+    const n = index + 1;
+    const raw = values[`e${n}_hours`]?.value.value?.trim();
+    if (!raw) return;
+    const task = values[`e${n}_task`]?.lt_task?.selected_option?.value;
+    const durationError = hoursError(raw);
+    if (durationError) errors[`e${n}_hours`] = durationError;
+    if (!task) errors[`e${n}_task`] = "Choose a task or type a new one";
+    if (values[`e${n}_act`] && !values[`e${n}_act`].value.selected_option) errors[`e${n}_act`] = "Choose an activity";
+    entries.push({
+      n,
+      projectId,
+      workPackageId: task?.startsWith("wp:") ? Number(task.slice(3)) : null,
+      newTask: task?.startsWith("new:") ? task.slice(4).trim() : null,
+      activityId: Number(values[`e${n}_act`]?.value.selected_option?.value) || null,
+      hours: parseHours(raw),
+      spentOn,
+      comment: review?.items[index]?.text ?? "",
+    });
+  });
+  if (!review || review.status !== "pending") errors.date = "This EOD was already logged or has expired.";
+  else if (!entries.length) errors.e1_hours = "Add time to at least one item";
+  const total = entries.reduce((s, e) => s + (e.hours ?? 0), 0);
+  if (!Object.keys(errors).length && total > MAX_HOURS_PER_DAY + 1e-9) {
+    errors[`e${entries.at(-1).n}_hours`] = `These add up to ${formatHours(total)}. Max is ${MAX_HOURS_PER_DAY}h a day.`;
+  }
+  if (Object.keys(errors).length) {
+    await ack({ response_action: "errors", errors });
+    return;
+  }
+  await ack();
+  review.status = "logging";
+  const dm = (msg) => client.chat.postMessage({ channel: body.user.id, ...(typeof msg === "string" ? { text: msg } : msg) });
+  try {
+    const user = await vynkUser(client, body.user.id);
+    const result = await logEntries(user, entries);
+    const ok = typeof result !== "string" && !result.failed;
+    review.status = ok ? "done" : "pending";
+    await store.save();
+    if (ok && review.dmChannel) {
+      await client.chat
+        .update({
+          channel: review.dmChannel,
+          ts: review.dmTs,
+          ...eodDoneView({ entries, source: `<${permalink(review.channel, review.ts)}|EOD>` }),
+        })
+        .catch((err) => logger.warn(`could not update EOD card: ${err.message}`));
+    }
+    await deliver(dm, typeof result === "string" ? { text: result } : result);
+  } catch (err) {
+    review.status = "pending";
+    await store.save();
+    if (!(err instanceof UserFacingError)) logger.error("eod_log failed", err);
+    await dm(errorText(err));
+  }
+});
+
+app.action("eod_dismiss", async ({ ack, body, action, client }) => {
+  await ack();
+  const review = store.data.reviews[action.value];
+  if (review && review.slackUserId === body.user.id && review.status === "pending") {
+    delete store.data.reviews[action.value];
+    await store.save();
+  }
+  await client.chat
+    .update({ channel: body.channel.id, ts: body.message.ts, text: "EOD dismissed", blocks: eodDismissedView().blocks })
+    .catch(() => null);
+});
+
 // Sign-in callback (proxied from https://<vynk>/__slack/ by the nginx in front of Vynk).
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, PUBLIC_URL);
@@ -899,10 +1181,16 @@ const server = http.createServer(async (req, res) => {
       connectedAt: new Date().toISOString(),
     });
     meCache.delete(slackUserId);
+    const waiting = store.data.waiting[slackUserId];
+    if (waiting) {
+      delete store.data.waiting[slackUserId];
+      await store.save();
+    }
     send(200, { ok: true, title: "You're connected", message: `Signed in as ${me.name}. You can close this tab and go back to Slack.` });
     await app.client.chat
       .postMessage({ channel: slackUserId, text: `Connected as ${me.name}`, ...(await menuMessage(app.client, slackUserId)) })
       .catch((err) => app.logger.warn(`welcome DM failed: ${err.message}`));
+    if (waiting) await startEodReview(app.client, waiting).catch((err) => app.logger.error("EOD review after sign-in failed", err));
   } catch (err) {
     app.logger.error("oauth callback failed", err);
     send(400, { ok: false, title: "Couldn't connect", message: err.message || "Please try again from Slack." });
@@ -910,6 +1198,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 await sessions.load();
+await store.load();
 server.listen(Number(process.env.PORT || 3000));
 await app.start();
 startReminderLoop();

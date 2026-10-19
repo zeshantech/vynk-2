@@ -287,6 +287,96 @@ export function connectView(url) {
   };
 }
 
+export function eodReviewView({ review, source, urls }) {
+  const projects = new Set(review.items.map((i) => i.projectName));
+  const rows = [[bold("Project"), bold("Item"), bold("Task"), bold("Time")]];
+  for (const item of review.items) {
+    rows.push([
+      item.projectName,
+      item.text,
+      item.taskId ? link(item.taskSubject, urls.wp(item.taskId)) : "New task",
+      item.hours ? formatHours(item.hours) : "–",
+    ]);
+  }
+  const notes = [];
+  if (review.extra) notes.push(`+${review.extra} more item${review.extra === 1 ? "" : "s"} not shown (max 15 per EOD).`);
+  if (review.noAccess.length) notes.push(`Skipped, you're not a member: ${review.noAccess.map(escape).join(", ")}.`);
+  if (review.unmatched.length)
+    notes.push(
+      `No Vynk project found for: ${review.unmatched
+        .slice(0, 5)
+        .map((t) => `"${escape(t).slice(0, 60)}"`)
+        .join(", ")}${review.unmatched.length > 5 ? "…" : ""}`,
+    );
+  const before = [
+    header(`Your EOD  ·  ${prettyDate(review.date)}`),
+    context(
+      `${review.items.length} item${review.items.length === 1 ? "" : "s"} in ${projects.size} project${projects.size === 1 ? "" : "s"}  ·  from your ${source}`,
+    ),
+  ];
+  const after = [
+    ...notes.map((n) => context(n)),
+    {
+      type: "actions",
+      elements: [button("Review & log time", "eod_review", review.id, "primary"), button("Dismiss", "eod_dismiss", review.id)],
+    },
+  ];
+  return withTable(
+    `Your EOD for ${prettyDate(review.date)}: ${review.items.length} items to log`,
+    before,
+    rows,
+    [null, null, null, "right"],
+    after,
+  );
+}
+
+export function eodNothingView({ source, noAccess, unmatched, date }) {
+  const lines = [];
+  if (noAccess.length) lines.push(`You're not a member of: *${noAccess.map(escape).join(", ")}*. Ask an admin to add you.`);
+  if (unmatched.length)
+    lines.push(
+      `No Vynk project matched: ${unmatched
+        .slice(0, 5)
+        .map((t) => `"${escape(t).slice(0, 60)}"`)
+        .join(", ")}`,
+    );
+  lines.push("Tip: start each project's items with its name on its own line, e.g. `MAX:`");
+  return {
+    text: "I couldn't match your EOD to your projects",
+    blocks: [
+      { type: "section", text: md(`*I couldn't match your ${source} for ${prettyDate(date)} to any of your projects.*`) },
+      ...lines.map((l) => context(l)),
+      { type: "actions", elements: [button("Log time manually", "open_log_time", "log", "primary")] },
+    ],
+  };
+}
+
+export function eodConnectView({ url, source }) {
+  return {
+    text: "Connect Vynk to log your EOD",
+    blocks: [
+      { type: "section", text: md(`*I saw your ${source}.*\nConnect your Vynk account once and I'll turn it into time entries for you.`) },
+      { type: "actions", elements: [{ ...button("Connect Vynk", "connect_vynk", "connect", "primary"), url }] },
+      context("Use the same email as your Slack account. The link works for 15 minutes; your EOD waits for you."),
+    ],
+  };
+}
+
+export function eodDoneView({ entries, source }) {
+  const total = entries.reduce((s, e) => s + e.hours, 0);
+  return {
+    text: `EOD logged: ${formatHours(total)}`,
+    blocks: [
+      { type: "section", text: md(`:white_check_mark:  *EOD logged  ·  ${formatHours(total)}*`) },
+      context(`${entries.length} entr${entries.length === 1 ? "y" : "ies"} from your ${source}`),
+    ],
+  };
+}
+
+export function eodDismissedView() {
+  return { blocks: [context("EOD dismissed. Nothing was logged.")] };
+}
+
 export function noticeView(text) {
   return { text, blocks: [{ type: "section", text: md(text) }] };
 }
