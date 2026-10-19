@@ -196,8 +196,9 @@ const shortRole = (roles) => roles.map((r) => r.replace(/^project\s+/i, "").repl
 function membersCell(list = []) {
   if (!list.length) return "–";
   const sorted = [...list].sort((a, b) => roleRank(a.roles) - roleRank(b.roles) || a.name.localeCompare(b.name));
-  const shown = sorted.slice(0, 3).map((m) => `${m.name} · ${shortRole(m.roles)}`);
-  return shown.join(", ") + (sorted.length > 3 ? `  +${sorted.length - 3}` : "");
+  const lines = sorted.slice(0, 6).map((m) => `${m.name} (${shortRole(m.roles).toLowerCase()})`);
+  if (sorted.length > 6) lines.push(`+${sorted.length - 6} more`);
+  return lines.join("\n");
 }
 
 export function projectsView({ projects, mine, team, members = [], details = new Map(), urls, showTeam }) {
@@ -412,10 +413,11 @@ export function eodReviewView({ review, source, urls }) {
       item.projectName,
       item.text,
       item.taskId ? link(item.taskSubject, urls.wp(item.taskId)) : "New task",
-      item.hours ? formatHours(item.hours) : "–",
+      item.hours ? `${item.suggested ? "≈ " : ""}${formatHours(item.hours)}` : "–",
     ]);
   }
   const notes = [];
+  if (review.items.some((i) => i.suggested)) notes.push("≈ = split from the total you wrote for that project. Adjust it when you review.");
   if (review.extra) notes.push(`+${review.extra} more item${review.extra === 1 ? "" : "s"} not shown (max 15 per EOD).`);
   if (review.noAccess.length) notes.push(`Skipped, you can't log time in: ${review.noAccess.map(escape).join(", ")}.`);
   if (review.unmatched.length)

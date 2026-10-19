@@ -789,6 +789,20 @@ const noCreateRights = (err) => {
   throw err;
 };
 
+/** The project a short mention like "PRI" or "atlas-chris" clearly refers to, or null. */
+function explicitProject(mention, projects) {
+  const m = normalize(mention);
+  if (!m || m.length < 2) return null;
+  const hits = projects.filter((p) => {
+    const name = normalize(p.name);
+    const base = normalize(p.name.replace(/\([^)]*\)/g, " "));
+    return (
+      name === m || base === m || normalize(p.identifier) === m || (m.length >= 3 && (name.startsWith(`${m} `) || base.startsWith(`${m} `)))
+    );
+  });
+  return hits.length === 1 ? hits[0] : null;
+}
+
 const idFromLink = (link) => (link?.href ? Number(link.href.split("/").pop()) : null);
 
 const cache = new Map();
@@ -1022,7 +1036,8 @@ app.options("lt_task", async ({ ack, body }) => {
   try {
     const meta = JSON.parse(body.view?.private_metadata || "{}");
     const entryIndex = Number(String(body.block_id ?? "").match(/^e(\d+)_/)?.[1] ?? 0) - 1;
-    const projectId = meta.entries ? meta.entries[entryIndex]?.projectId : meta.projectId;
+    const picked = Number(body.view?.state?.values?.[`e${entryIndex + 1}_project`]?.value?.selected_option?.value);
+    const projectId = picked || (meta.entries ? meta.entries[entryIndex]?.projectId : meta.projectId);
     const query = String(body.value ?? "").trim();
     const user = await vynkUser(app.client, body.user.id);
     const tasks = projectId ? await cached(`tasks:${user.id}:${projectId}`, 30_000, () => user.api.projectTasks(projectId)) : [];
@@ -1030,7 +1045,7 @@ app.options("lt_task", async ({ ack, body }) => {
     const options = tasks
       .filter((t) => !needle || t.subject.toLowerCase().includes(needle))
       .slice(0, 99)
-      .map((t) => option(t.subject, `wp:${t.id}`));
+      .map((t) => option(t.subject, `wp:${t.id}:${projectId}`));
     const canCreate = projectId ? allowed((await permissions(user)).createTask, projectId) : false;
     if (canCreate && query && !tasks.some((t) => t.subject.toLowerCase() === needle))
       options.unshift(option(`+ New task: ${query}`, `new:${query}`));
@@ -1077,7 +1092,7 @@ app.view("log_time", async ({ ack, body, view, client, logger }) => {
     if (values[`e${n}_act`] && !values[`e${n}_act`].value.selected_option) errors[`e${n}_act`] = "Choose an activity";
     entries.push({
       projectId: meta.projectId,
-      workPackageId: task?.startsWith("wp:") ? Number(task.slice(3)) : null,
+      workPackageId: task?.startsWith("wp:") ? parseInt(task.slice(3), 10) : null,
       newTask: task?.startsWith("new:") ? task.slice(4).trim() : null,
       subtask: values[`e${n}_sub`]?.value.value?.trim() || null,
       activityId: Number(values[`e${n}_act`]?.value.selected_option?.value) || null,
@@ -1396,6 +1411,11 @@ async function startEodReview(client, report) {
   const date = result.date && result.date <= dateOfTs(report.ts) ? result.date : dateOfTs(report.ts);
 
   const all = await cached("projects:all", 5 * 60_000, () => op.projects());
+  // A project the author named outright beats whatever the model inferred.
+  for (const item of result.items) {
+    const named = explicitProject(item.mention, all);
+    if (named && named.id !== item.projectId) Object.assign(item, { projectId: named.id, taskId: null, taskSubject: null });
+  }
   const items = [];
   const noAccess = new Set();
   const unmatched = [];
@@ -1408,6 +1428,16 @@ async function startEodReview(client, report) {
   if (!items.length) {
     await dm(eodNothingView({ source: link, noAccess: [...noAccess], unmatched, date }));
     return;
+  }
+
+  // "PRI ~5hrs:" covers the whole section: spread what's left over items without their own time.
+  for (const { projectId, hours } of result.projectHours ?? []) {
+    const list = items.filter((i) => i.projectId === projectId);
+    const missing = list.filter((i) => !i.hours);
+    const rest = hours - list.reduce((sum, i) => sum + (i.hours ?? 0), 0);
+    if (rest <= 0 || !missing.length) continue;
+    const each = Math.min(MAX_HOURS_PER_ENTRY, Math.max(0.25, Math.round((rest / missing.length) * 4) / 4));
+    for (const item of missing) Object.assign(item, { hours: each, suggested: true });
   }
 
   const extra = Math.max(0, items.length - MAX_EOD_ITEMS);
@@ -1447,6 +1477,8 @@ app.action("eod_review", async ({ ack, body, action, client }) => {
     if (review.status !== "pending") throw new UserFacingError("You've already logged this EOD.");
     if (review.slackUserId !== body.user.id) throw new UserFacingError("This EOD belongs to someone else.");
     const user = await vynkUser(client, body.user.id);
+    const { projects: loggable } = await loggableProjects(user);
+    const projectOptions = loggable.slice(0, 100).map((p) => option(p.name, p.id));
     const activities = new Map();
     for (const projectId of new Set(review.items.map((i) => i.projectId))) {
       activities.set(projectId, await cached(`activities:${user.id}:${projectId}`, 300_000, () => user.api.activities(projectId)));
@@ -1460,7 +1492,20 @@ app.action("eod_review", async ({ ack, body, action, client }) => {
       const acts = activities.get(item.projectId) ?? [];
       blocks.push(
         { type: "divider" },
-        { type: "context", elements: [{ type: "mrkdwn", text: `*${escape(item.projectName)}*  ·  ${escape(item.text).slice(0, 150)}` }] },
+        { type: "context", elements: [{ type: "mrkdwn", text: `*From your EOD:* ${escape(item.text).slice(0, 150)}` }] },
+        {
+          type: "input",
+          block_id: `e${n}_project`,
+          label: plain("Project"),
+          element: {
+            type: "static_select",
+            action_id: "value",
+            options: projectOptions.some((o) => o.value === String(item.projectId))
+              ? projectOptions
+              : [option(item.projectName, item.projectId), ...projectOptions].slice(0, 100),
+            initial_option: option(item.projectName, item.projectId),
+          },
+        },
         {
           type: "input",
           block_id: `e${n}_task`,
@@ -1471,7 +1516,7 @@ app.action("eod_review", async ({ ack, body, action, client }) => {
             min_query_length: 0,
             placeholder: plain("Search or type a new task"),
             initial_option: item.taskId
-              ? option(item.taskSubject, `wp:${item.taskId}`)
+              ? option(item.taskSubject, `wp:${item.taskId}:${item.projectId}`)
               : option(`+ New task: ${item.text}`, `new:${item.text}`),
           },
         },
@@ -1513,11 +1558,16 @@ app.view("eod_log", async ({ ack, body, view, client, logger }) => {
   const spentOn = values.date?.value.selected_date;
   const errors = {};
   const entries = [];
-  (meta.entries ?? []).forEach(({ projectId }, index) => {
+  (meta.entries ?? []).forEach(({ projectId: suggestedProject }, index) => {
     const n = index + 1;
     const raw = values[`e${n}_hours`]?.value.value?.trim();
     if (!raw) return;
+    const projectId = Number(values[`e${n}_project`]?.value.selected_option?.value) || suggestedProject;
     const task = values[`e${n}_task`]?.lt_task?.selected_option?.value;
+    const taskProject = Number(task?.match(/^wp:\d+:(\d+)$/)?.[1]);
+    if (taskProject && taskProject !== projectId) {
+      errors[`e${n}_task`] = "This task belongs to another project. Pick one from the selected project or type a new one.";
+    }
     const durationError = hoursError(raw);
     if (durationError) errors[`e${n}_hours`] = durationError;
     if (!task) errors[`e${n}_task`] = "Choose a task or type a new one";
@@ -1525,7 +1575,7 @@ app.view("eod_log", async ({ ack, body, view, client, logger }) => {
     entries.push({
       n,
       projectId,
-      workPackageId: task?.startsWith("wp:") ? Number(task.slice(3)) : null,
+      workPackageId: task?.startsWith("wp:") ? parseInt(task.slice(3), 10) : null,
       newTask: task?.startsWith("new:") ? task.slice(4).trim() : null,
       activityId: Number(values[`e${n}_act`]?.value.selected_option?.value) || null,
       hours: parseHours(raw),

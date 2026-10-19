@@ -36,19 +36,33 @@ const RESULT_SCHEMA = {
     },
     date: { type: ["string", "null"], description: "Day the work was done as YYYY-MM-DD if the message states one, else null." },
     items: { type: "array", description: "Each distinct piece of work DONE (not planned, not blockers).", items: ITEM_SCHEMA },
+    project_hours: {
+      type: "array",
+      description: "Durations written for a whole project section (e.g. 'PRI ~5hrs:'), not for a single item.",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          project_id: { type: ["integer", "null"], description: "id of the project the duration is for, or null." },
+          hours: { type: "number", description: "Total hours written for that project." },
+        },
+        required: ["project_id", "hours"],
+      },
+    },
   },
-  required: ["is_eod", "date", "items"],
+  required: ["is_eod", "date", "items", "project_hours"],
 };
 
 const SYSTEM = `You turn Slack end-of-day (EOD) reports into time-tracking items for a project management tool.
 Rules:
 - Only include work that was done. Skip plans for tomorrow, blockers, questions, greetings and meetings with no project unless they clearly belong to a project.
-- Map each item to a project from the list using project names, identifiers, abbreviations, the project's client and its parent company.
+- If the message names a project explicitly (a heading like "PRI:", a prefix, the project name, identifier or an obvious abbreviation), ALWAYS use that project, even when author_is_member is false. author_is_member is informational only; never move work to a different project because of it.
+- Otherwise map each item to a project from the list using project names, identifiers, abbreviations, the project's client and its parent company.
   Example: "chris to debug its intelligence app" belongs to the project whose client is Chris and whose name mentions intelligence, not to another Chris project.
   Work for a company in general (not a specific product) belongs to the parent company's own project.
   If several projects fit equally, or none fits, use null.
 - Prefer an existing task when it is clearly the same work; otherwise null so a new task is created.
-- Do not invent hours. Only copy durations written in the message.
+- Do not invent hours. Only copy durations written in the message. A duration written on a project heading belongs in project_hours, not on the items.
 - Keep titles short and clean (no bullets, emojis, links or durations).`;
 
 export class EodReader {
@@ -119,5 +133,8 @@ function sanitize(result, projects, tasks) {
     })
     .filter((i) => i.title.length >= 2);
   const date = /^\d{4}-\d{2}-\d{2}$/.test(result?.date ?? "") ? result.date : null;
-  return { isEod: Boolean(result?.is_eod) && items.length > 0, date, items };
+  const projectHours = (Array.isArray(result?.project_hours) ? result.project_hours : [])
+    .filter((h) => projectIds.has(h.project_id) && Number(h.hours) > 0 && Number(h.hours) <= 24)
+    .map((h) => ({ projectId: h.project_id, hours: Math.round(Number(h.hours) * 100) / 100 }));
+  return { isEod: Boolean(result?.is_eod) && items.length > 0, date, items, projectHours };
 }
