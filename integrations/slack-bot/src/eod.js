@@ -3,7 +3,7 @@
 import { parseHours } from "./time.js";
 
 const EOD_WORDS =
-  /\b(eod|e\.o\.d|end[\s-]of[\s-](the[\s-])?day|daily\s+(update|report|status)|day\s+report|today'?s?\s+(work|update|progress|report))\b/i;
+  /\b(eods?|e\.o\.d|end[\s-]of[\s-](the[\s-])?day|daily\s+(update|report|status)|day\s+report|today'?s?\s+(work|update|progress|report))\b/i;
 // Sections that describe future work or problems, not work done today.
 const SKIP_SECTION =
   /^(tomorrow|tmrw|next\s*(day|steps?)?|plans?(\s+for\s+tomorrow)?|planned|planning|upcoming|to\s*-?\s*do|todo|pending|blockers?|blocked|issues?|challenges?|impediments?|questions?|notes?|concerns?|risks?)\b/i;
@@ -40,7 +40,9 @@ export const normalize = (s) =>
 function projectMatcher(projects) {
   const keys = [];
   for (const p of projects) {
-    for (const key of new Set([normalize(p.name), normalize(p.identifier)])) if (key) keys.push({ key, project: p });
+    // "PRI (mike's project)" is usually written as just "PRI".
+    const base = normalize(p.name.replace(/\([^)]*\)/g, " "));
+    for (const key of new Set([normalize(p.name), normalize(p.identifier), base])) if (key) keys.push({ key, project: p });
   }
   keys.sort((a, b) => b.key.length - a.key.length);
   return {
@@ -116,6 +118,7 @@ export function parseEod(text, projects, { today, inEodChannel = true } = {}) {
   const unassigned = [];
   let current = null;
   let skipping = false;
+  let currentDate = null;
   const sectionFor = (project, heading) => {
     let s = sections.find((x) => x.project && project && x.project.id === project.id);
     if (!s) {
@@ -128,6 +131,7 @@ export function parseEod(text, projects, { today, inEodChannel = true } = {}) {
     const item = splitHours(itemText.replace(BULLET, "").trim());
     if (!item.text || item.text.length < 2 || !/[a-z]/i.test(item.text)) return;
     item.text = item.text.slice(0, MAX_ITEM_LENGTH);
+    item.date = currentDate;
     if (current) current.items.push(item);
     else unassigned.push(item);
   };
@@ -139,7 +143,14 @@ export function parseEod(text, projects, { today, inEodChannel = true } = {}) {
     const label = body.replace(/^project\s*(name)?\s*[:\-–—]?\s*/i, "");
     const [, beforeColon, afterColon] = label.match(/^([^:]{1,60}?)\s*(?::|\s[-–—|]\s)\s*(.*)$/) ?? [];
 
-    if (SKIP_SECTION.test(body) && body.split(/\s+/).length <= 6) {
+    // "Monday, October 12, 2026" starts a new day.
+    const dayDate = !isBullet && body.split(/\s+/).length <= 6 && !/:\s*\S/.test(body) ? findDate(body, today) : null;
+    if (dayDate) {
+      currentDate = dayDate;
+      skipping = false;
+      continue;
+    }
+    if (!isBullet && SKIP_SECTION.test(body) && (/:\s*$/.test(body) || body.split(/\s+/).length <= 3)) {
       skipping = true;
       continue;
     }
@@ -149,9 +160,10 @@ export function parseEod(text, projects, { today, inEodChannel = true } = {}) {
     }
 
     // "MAX" / "MAX:" / "Project: MAX" / "Project MAX (backend)" on its own line
+    const headingText = label.replace(/[:\-–—]+$/, "");
+    const headingLike = !isBullet && !afterColon && (headingText.split(/\s+/).length <= 6 || /:\s*$/.test(label));
     const wholeHeading =
-      match.exact(label.replace(/[:\-–—]+$/, "")) ??
-      (!isBullet && label.split(/\s+/).length <= 6 && !afterColon ? match.within(label) : null);
+      match.exact(headingText) ?? (headingLike ? (match.within(headingText.split(/[/|(]/)[0]) ?? match.within(headingText)) : null);
     if (wholeHeading) {
       current = sectionFor(wholeHeading, label);
       skipping = false;

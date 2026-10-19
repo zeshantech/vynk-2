@@ -57,7 +57,11 @@ const sessions = new Sessions({
   dataDir: process.env.DATA_DIR || "/data",
 });
 const store = new Store(process.env.DATA_DIR || "/data");
-const eodReader = new EodReader({ apiKey: process.env.GROQ_API_KEY, model: process.env.EOD_MODEL || "openai/gpt-oss-20b" });
+const eodReader = new EodReader({
+  apiKey: process.env.GROQ_API_KEY,
+  model: process.env.EOD_MODEL || "openai/gpt-oss-20b",
+  tokensPerMinute: Number(process.env.GROQ_TOKENS_PER_MINUTE || 8000),
+});
 
 const app = new App({
   token: env("SLACK_BOT_TOKEN"),
@@ -151,7 +155,7 @@ function errorText(err) {
 
 /** Sends a reply; if Slack rejects the table block, resends with the monospace fallback. */
 async function deliver(send, msg) {
-  const { fallback, failed, ...main } = msg;
+  const { fallback, failed, results, ...main } = msg;
   if (!fallback) return send(main);
   try {
     const res = await send(main);
@@ -776,11 +780,11 @@ async function logEntries(user, entries) {
     weekTotal,
     urls,
   });
-  if (!failure) return view;
+  if (!failure) return { ...view, results };
   if (!(failure instanceof UserFacingError)) app.logger.error("logging entry failed", failure);
   const note = `${errorText(failure)}${results.length ? ` (${results.length} of ${entries.length} saved)` : ""}`;
   return results.length
-    ? { ...view, failed: true, blocks: [...view.blocks, { type: "context", elements: [{ type: "mrkdwn", text: note }] }] }
+    ? { ...view, results, failed: true, blocks: [...view.blocks, { type: "context", elements: [{ type: "mrkdwn", text: note }] }] }
     : note;
 }
 
@@ -793,17 +797,52 @@ const noCreateRights = (err) => {
  * Fills in time for items that have none from totals written for a group (a project section,
  * a day or the whole report): what's left is split per day first, then per item, in 15-minute steps.
  */
+/** Splits `total` hours in 15-minute steps in proportion to `weights` (each at least 15 minutes), adding up exactly. */
+function splitInQuarters(total, weights) {
+  const units = Math.max(weights.length, Math.round(total * 4));
+  const sum = weights.reduce((a, b) => a + b, 0) || weights.length;
+  const raw = weights.map((w) => ((w || 1) / sum) * units);
+  const parts = raw.map((r) => Math.max(1, Math.floor(r)));
+  let left = units - parts.reduce((a, b) => a + b, 0);
+  const order = raw.map((r, k) => [r - Math.floor(r), k]).sort((a, b) => b[0] - a[0]);
+  for (let n = 0; left > 0; n++, left--) parts[order[n % order.length][1]] += 1;
+  for (let n = 0; left < 0; n++) {
+    const k = parts.indexOf(Math.max(...parts));
+    if (parts[k] <= 1) break;
+    parts[k] -= 1;
+    left++;
+  }
+  return parts.map((p) => p / 4);
+}
+
 function spreadHours(items, groups) {
+  const quarter = (h) => Math.max(0.25, Math.round(h * 4) / 4);
   const specificity = (g) => (g.projectId ? 2 : 0) + (g.date ? 1 : 0);
   for (const g of [...groups].sort((a, b) => specificity(b) - specificity(a))) {
     const pool = items.filter((i) => (!g.projectId || i.projectId === g.projectId) && (!g.date || i.date === g.date));
-    const rest = g.hours - pool.reduce((sum, i) => sum + (i.hours ?? 0), 0);
+    if (!pool.length) continue;
+    const written = pool.filter((i) => i.hours && !i.estimated && !i.suggested).reduce((sum, i) => sum + i.hours, 0);
+    let target = g.hours - written;
+    if (target <= 0) continue;
+
+    // The model's estimates for this group are kept in proportion but scaled to add up to the written total.
+    const estimated = pool.filter((i) => i.hours && (i.estimated || i.suggested));
+    const estimatedSum = estimated.reduce((sum, i) => sum + i.hours, 0);
     const missing = pool.filter((i) => !i.hours);
-    if (rest <= 0 || !missing.length) continue;
+    if (estimated.length && !missing.length) {
+      const hours = splitInQuarters(
+        target,
+        estimated.map((i) => i.hours),
+      );
+      estimated.forEach((item, k) => Object.assign(item, { hours: Math.min(MAX_HOURS_PER_ENTRY, hours[k]), suggested: true }));
+      continue;
+    }
+    target -= estimatedSum;
+    if (target <= 0 || !missing.length) continue;
     const days = [...new Set(missing.map((i) => i.date))];
     for (const day of days) {
       const dayItems = missing.filter((i) => i.date === day);
-      const each = Math.min(MAX_HOURS_PER_ENTRY, Math.max(0.25, Math.round((rest / days.length / dayItems.length) * 4) / 4));
+      const each = Math.min(MAX_HOURS_PER_ENTRY, quarter(target / days.length / dayItems.length));
       for (const item of dayItems) Object.assign(item, { hours: each, suggested: true });
     }
   }
@@ -816,9 +855,9 @@ function explicitProject(mention, projects) {
   const hits = projects.filter((p) => {
     const name = normalize(p.name);
     const base = normalize(p.name.replace(/\([^)]*\)/g, " "));
-    return (
-      name === m || base === m || normalize(p.identifier) === m || (m.length >= 3 && (name.startsWith(`${m} `) || base.startsWith(`${m} `)))
-    );
+    if (name === m || base === m || normalize(p.identifier) === m) return true;
+    // "PRI" for "PRI (mike's project)", or a heading like "PRI / KPI Revenue Center (Backend B04)"
+    return (m.length >= 3 && (name.startsWith(`${m} `) || base.startsWith(`${m} `))) || (base.length >= 3 && m.startsWith(`${base} `));
   });
   return hits.length === 1 ? hits[0] : null;
 }
@@ -888,7 +927,11 @@ function formState(values = {}) {
   const out = {};
   for (const [blockId, actions] of Object.entries(values)) {
     const v = Object.values(actions)[0] ?? {};
-    out[blockId.replace(/@.*$/, "")] = { text: v.value ?? undefined, option: v.selected_option ?? undefined, date: v.selected_date ?? undefined };
+    out[blockId.replace(/@.*$/, "")] = {
+      text: v.value ?? undefined,
+      option: v.selected_option ?? undefined,
+      date: v.selected_date ?? undefined,
+    };
   }
   return out;
 }
@@ -1442,7 +1485,10 @@ const EOD_CHANNELS = (process.env.EOD_CHANNELS || "eod-updates")
   .split(",")
   .map((s) => s.trim().replace(/^#/, "").toLowerCase())
   .filter(Boolean);
-const MAX_EOD_ITEMS = 13;
+const MAX_EOD_ITEMS = 60;
+const EOD_PAGE_SIZE = 12;
+// Project and activity choices per open EOD form, so the next page can be built within Slack's 3 seconds.
+const eodFormChoices = new Map();
 const channelNames = new Map();
 
 async function isEodChannel(client, channelId) {
@@ -1476,32 +1522,53 @@ async function readEod({ user, report, mine }) {
   for (const p of all) projects.push({ ...p, member: mine.has(p.id), ...(await projectDetails(p)) });
   for (const p of mine.values()) if (!projects.some((x) => x.id === p.id)) projects.push({ ...p, member: true });
   const today = dateOfTs(report.ts);
+  const rules = () => readEodWithRules(report.text, projects, today);
 
-  if (eodReader.enabled) {
-    const text = ` ${normalize(report.text)} `;
-    const named = [...mine.values()].filter((p) => [p.name, p.identifier].some((k) => normalize(k) && text.includes(` ${normalize(k)} `)));
-    const candidates = (named.length ? named : mine.size <= 5 ? [...mine.values()] : []).slice(0, 10);
-    const tasks = [];
-    for (const p of candidates) {
-      const list = await cached(`tasks:${user.id}:${p.id}`, 30_000, () => user.api.projectTasks(p.id)).catch(() => []);
-      tasks.push(...list.slice(0, 60).map((t) => ({ id: t.id, subject: t.subject, projectId: p.id })));
-    }
-    try {
-      return await eodReader.read({ text: report.text, projects, tasks, today });
-    } catch (err) {
-      app.logger.error("LLM could not read the EOD, using the rule-based parser", err);
-    }
+  if (!eodReader.enabled) return rules();
+  const text = ` ${normalize(report.text)} `;
+  const named = [...mine.values()].filter((p) =>
+    [p.name, p.identifier, p.name.replace(/\([^)]*\)/g, " ")].some((k) => normalize(k) && text.includes(` ${normalize(k)} `)),
+  );
+  const candidates = (named.length ? named : mine.size <= 5 ? [...mine.values()] : []).slice(0, 10);
+  const tasks = [];
+  for (const p of candidates) {
+    const list = await cached(`tasks:${user.id}:${p.id}`, 30_000, () => user.api.projectTasks(p.id)).catch(() => []);
+    tasks.push(...list.slice(0, 30).map((t) => ({ id: t.id, subject: t.subject, projectId: p.id })));
   }
+  let result;
+  try {
+    result = await eodReader.read({ text: report.text, projects, tasks, today });
+  } catch (err) {
+    app.logger.error("LLM could not read the EOD, using the rule-based parser", err);
+    return rules();
+  }
+  // The model sometimes misses the projects entirely; the rules then often still find them.
+  const placed = (r) => r.items.filter((i) => i.projectId || explicitProject(i.mention, all)).length;
+  if (!result.isEod || placed(result) === 0) {
+    const fallback = rules();
+    if (fallback.isEod && placed(fallback) > 0) return { ...fallback, hoursGroups: result.isEod ? result.hoursGroups : [] };
+  }
+  return result;
+}
 
-  const parsed = parseEod(report.text, projects, { today, inEodChannel: true });
+function readEodWithRules(text, projects, today) {
+  const parsed = parseEod(text, projects, { today, inEodChannel: true });
   return {
     isEod: parsed.isEod,
     date: parsed.date,
+    hoursGroups: [],
     items: [
       ...parsed.sections.flatMap((s) =>
-        s.items.map((i) => ({ projectId: s.project?.id ?? null, mention: s.heading, title: i.text, hours: i.hours, notes: "" })),
+        s.items.map((i) => ({
+          projectId: s.project?.id ?? null,
+          mention: s.heading,
+          title: i.text,
+          hours: i.hours,
+          notes: "",
+          date: i.date ?? null,
+        })),
       ),
-      ...parsed.unassigned.map((i) => ({ projectId: null, mention: "", title: i.text, hours: i.hours, notes: "" })),
+      ...parsed.unassigned.map((i) => ({ projectId: null, mention: "", title: i.text, hours: i.hours, notes: "", date: i.date ?? null })),
     ],
   };
 }
@@ -1563,38 +1630,95 @@ async function startEodReview(client, report) {
   for (const item of items) item.date = item.date && item.date <= messageDay ? item.date : reportDate;
   spreadHours(items, result.hoursGroups ?? []);
 
-  // One review card per day, so every entry keeps its own date.
-  const days = [...new Set(items.map((i) => i.date))].sort((a, b) => (a === null) - (b === null) || String(a).localeCompare(String(b)));
-  for (const [index, day] of days.entries()) {
-    const dayItems = items.filter((i) => i.date === day);
-    const shown = dayItems.slice(0, MAX_EOD_ITEMS);
-    for (const projectId of new Set(shown.filter((i) => !i.taskId).map((i) => i.projectId))) {
-      const tasks = await cached(`tasks:${user.id}:${projectId}`, 30_000, () => user.api.projectTasks(projectId)).catch(() => []);
-      for (const item of shown.filter((i) => i.projectId === projectId && !i.taskId)) {
-        const task = matchTask(item.text, tasks);
-        if (task) Object.assign(item, { taskId: task.id, taskSubject: task.subject });
-      }
+  const shown = items.slice(0, MAX_EOD_ITEMS);
+  for (const projectId of new Set(shown.filter((i) => !i.taskId).map((i) => i.projectId))) {
+    const tasks = await cached(`tasks:${user.id}:${projectId}`, 30_000, () => user.api.projectTasks(projectId)).catch(() => []);
+    for (const item of shown.filter((i) => i.projectId === projectId && !i.taskId)) {
+      const task = matchTask(item.text, tasks);
+      if (task) Object.assign(item, { taskId: task.id, taskSubject: task.subject });
     }
-    const last = index === days.length - 1;
-    const review = {
-      id: crypto.randomUUID(),
-      slackUserId: report.slackUserId,
-      channel: report.channel,
-      ts: report.ts,
-      date: day,
-      items: shown,
-      noAccess: last ? [...noAccess] : [],
-      unmatched: last ? unmatched : [],
-      extra: dayItems.length - shown.length,
-      part: days.length > 1 ? { index: index + 1, of: days.length } : null,
-      status: "pending",
-      createdAt: Date.now(),
-    };
-    const posted = await dm(eodReviewView({ review, source: link, urls }));
-    Object.assign(review, { dmChannel: posted.channel, dmTs: posted.ts });
-    store.data.reviews[review.id] = review;
   }
+  const dates = shown
+    .map((i) => i.date)
+    .filter(Boolean)
+    .sort();
+  const review = {
+    id: crypto.randomUUID(),
+    slackUserId: report.slackUserId,
+    channel: report.channel,
+    ts: report.ts,
+    date: dates[0] ?? null,
+    dateTo: dates.at(-1) ?? null,
+    items: shown,
+    noAccess: [...noAccess],
+    unmatched,
+    extra: items.length - shown.length,
+    logged: [],
+    status: "pending",
+    createdAt: Date.now(),
+  };
+  const posted = await dm(eodReviewView({ review, source: link, urls }));
+  Object.assign(review, { dmChannel: posted.channel, dmTs: posted.ts });
+  store.data.reviews[review.id] = review;
   await store.save();
+}
+
+function eodPageView(review, page, { projectOptions, activities }) {
+  const pages = Math.max(1, Math.ceil(review.items.length / EOD_PAGE_SIZE));
+  const start = (page - 1) * EOD_PAGE_SIZE;
+  const pageItems = review.items.slice(start, start + EOD_PAGE_SIZE);
+  const blocks = [
+    {
+      type: "context",
+      elements: [
+        {
+          type: "mrkdwn",
+          text: `${pages > 1 ? `*Page ${page} of ${pages}*  ·  ` : ""}Each item is its own time entry. Check the project, task, date and time; leave the time empty to skip an item.`,
+        },
+      ],
+    },
+  ];
+  pageItems.forEach((item, index) => {
+    const n = index + 1;
+    const options = projectOptions.some((o) => o.value === String(item.projectId))
+      ? projectOptions
+      : [option(item.projectName, item.projectId), ...projectOptions].slice(0, 100);
+    blocks.push(
+      { type: "divider" },
+      { type: "context", elements: [{ type: "mrkdwn", text: `*${start + n}.* ${escape(item.text).slice(0, 150)}` }] },
+      ...entryBlocks(n, {
+        projectOptions: options,
+        activities,
+        preset: {
+          project: option(item.projectName, item.projectId),
+          task: item.taskId
+            ? option(item.taskSubject, `wp:${item.taskId}:${item.projectId}`)
+            : option(`+ New task: ${item.text}`, `new:${item.text}`),
+          date: item.date ?? undefined,
+          hours: item.hours ? formatHours(item.hours).replace(" ", "") : undefined,
+          optionalHours: true,
+          subtask: false,
+          notes: false,
+        },
+      }),
+    );
+  });
+  return {
+    type: "modal",
+    callback_id: "eod_log",
+    title: plain("Log your EOD"),
+    submit: plain(page < pages ? "Log & next" : "Log time"),
+    close: plain("Cancel"),
+    private_metadata: JSON.stringify({
+      reviewId: review.id,
+      page,
+      pages,
+      start,
+      entries: pageItems.map((i) => ({ projectId: i.projectId })),
+      projects: Object.fromEntries(pageItems.map((i, index) => [index + 1, i.projectId])),
+    }),
+    blocks,
+  };
 }
 
 app.action("eod_review", async ({ ack, body, action, client }) => {
@@ -1606,52 +1730,16 @@ app.action("eod_review", async ({ ack, body, action, client }) => {
     if (review.slackUserId !== body.user.id) throw new UserFacingError("This EOD belongs to someone else.");
     const user = await vynkUser(client, body.user.id);
     const { projects: loggable, activities } = await logTimeData(user);
-    const projectOptions = loggable.slice(0, 100).map((p) => option(p.name, p.id));
-    const blocks = [
-      {
-        type: "context",
-        elements: [
-          {
-            type: "mrkdwn",
-            text: "Each item is its own time entry. Check the project, task, date and time; leave the time empty to skip an item.",
-          },
-        ],
-      },
-    ];
-    review.items.forEach((item, index) => {
-      const n = index + 1;
-      blocks.push(
-        { type: "divider" },
-        { type: "context", elements: [{ type: "mrkdwn", text: `*${n}.* ${escape(item.text).slice(0, 150)}` }] },
-        ...entryBlocks(n, {
-          projectOptions: projectOptions.some((o) => o.value === String(item.projectId))
-            ? projectOptions
-            : [option(item.projectName, item.projectId), ...projectOptions].slice(0, 100),
-          activities,
-          preset: {
-            project: option(item.projectName, item.projectId),
-            task: item.taskId
-              ? option(item.taskSubject, `wp:${item.taskId}:${item.projectId}`)
-              : option(`+ New task: ${item.text}`, `new:${item.text}`),
-            date: item.date ?? undefined,
-            hours: item.hours ? formatHours(item.hours).replace(" ", "") : undefined,
-            optionalHours: true,
-            subtask: false,
-            notes: false,
-          },
-        }),
-      );
-    });
-    return {
-      callbackId: "eod_log",
-      submit: "Log time",
-      blocks,
-      privateMetadata: JSON.stringify({
-        reviewId: review.id,
-        entries: review.items.map((i) => ({ projectId: i.projectId })),
-        projects: Object.fromEntries(review.items.map((i, index) => [index + 1, i.projectId])),
-      }),
-    };
+    const choices = { projectOptions: loggable.slice(0, 100).map((p) => option(p.name, p.id)), activities };
+    eodFormChoices.set(review.id, choices);
+    // Reopened after an interrupted review: only the items not yet submitted are left.
+    if (review.done?.length) {
+      review.items = review.items.filter((_, i) => !review.done.includes(i));
+      review.done = [];
+      await store.save();
+    }
+    const view = eodPageView(review, 1, choices);
+    return { callbackId: view.callback_id, submit: view.submit.text, blocks: view.blocks, privateMetadata: view.private_metadata };
   });
 });
 
@@ -1659,45 +1747,123 @@ app.view("eod_log", async ({ ack, body, view, client, logger }) => {
   const values = view.state.values;
   const meta = JSON.parse(view.private_metadata || "{}");
   const review = store.data.reviews[meta.reviewId];
+  const page = meta.page ?? 1;
+  const pages = meta.pages ?? 1;
   const errors = {};
   const entries = [];
   (meta.entries ?? []).forEach((_, index) => {
-    const item = review?.items[index];
+    const item = review?.items[(meta.start ?? 0) + index];
     const { entry } = readEntry(values, index + 1, errors, { optionalHours: true, comment: item?.notes || item?.text || "" });
     if (entry) entries.push(entry);
   });
   if (!review || review.status !== "pending") errors.e1_hours = "This EOD was already logged or has expired.";
-  else if (!entries.length && !Object.keys(errors).length) errors.e1_hours = "Add time to at least one item";
+  else if (page === pages && !entries.length && !(review.logged ?? []).length && !Object.keys(errors).length) {
+    errors.e1_hours = "Add time to at least one item";
+  }
   if (!Object.keys(errors).length) checkDailyTotals(entries, errors);
   if (Object.keys(errors).length) {
     await ack({ response_action: "errors", errors });
     return;
   }
-  await ack();
-  review.status = "logging";
+  const more = page < pages;
+  const choices = eodFormChoices.get(review.id);
+  if (more && choices) await ack({ response_action: "update", view: eodPageView(review, page + 1, choices) });
+  else await ack();
+  const pageIndexes = (meta.entries ?? []).map((_, index) => (meta.start ?? 0) + index);
+
   const dm = (msg) => client.chat.postMessage({ channel: body.user.id, ...(typeof msg === "string" ? { text: msg } : msg) });
   try {
     const user = await vynkUser(client, body.user.id);
-    const result = await logEntries(user, entries);
-    const ok = typeof result !== "string" && !result.failed;
-    review.status = ok ? "done" : "pending";
-    await store.save();
-    if (ok && review.dmChannel) {
-      await client.chat
-        .update({
-          channel: review.dmChannel,
-          ts: review.dmTs,
-          ...eodDoneView({ entries, source: `<${permalink(review.channel, review.ts)}|EOD>` }),
-        })
-        .catch((err) => logger.warn(`could not update EOD card: ${err.message}`));
+    if (entries.length) {
+      let result;
+      try {
+        result = await logEntries(user, entries);
+      } catch (err) {
+        if (!(err instanceof UserFacingError)) throw err;
+        result = errorText(err);
+      }
+      if (typeof result === "string" || result.failed) {
+        // Nothing (or only part) of this page was saved: keep its items for the next review.
+        await deliver(dm, typeof result === "string" ? { text: result } : result);
+        const saved = typeof result === "string" ? [] : result.results;
+        review.logged = [...(review.logged ?? []), ...saved.map(slimResult)];
+        const savedNs = new Set(saved.map((r) => r.n));
+        review.done = [...(review.done ?? []), ...pageIndexes.filter((_, i) => savedNs.has(i + 1))];
+        review.incomplete = true;
+        if (!more) await finishEodReview({ review, user, client, dm, logger });
+        else await store.save();
+        return;
+      }
+      review.logged = [...(review.logged ?? []), ...result.results.map(slimResult)];
     }
-    await deliver(dm, typeof result === "string" ? { text: result } : result);
+    review.done = [...(review.done ?? []), ...pageIndexes];
+    if (more) {
+      await store.save();
+      if (!choices) await dm("Saved this page. Press *Review & log time* on your EOD again to log the rest.");
+      return;
+    }
+    await finishEodReview({ review, user, client, dm, logger });
   } catch (err) {
-    review.status = "pending";
-    await store.save();
     if (!(err instanceof UserFacingError)) logger.error("eod_log failed", err);
     await dm(errorText(err));
   }
+});
+
+/** Last page submitted: one summary, and the card is marked logged unless some items failed. */
+async function finishEodReview({ review, user, client, dm, logger }) {
+  eodFormChoices.delete(review.id);
+  const logged = review.logged ?? [];
+  const failed = Boolean(review.incomplete);
+  review.incomplete = false;
+  review.status = failed ? "pending" : "done";
+  await store.save();
+  if (!failed && review.dmChannel) {
+    await client.chat
+      .update({
+        channel: review.dmChannel,
+        ts: review.dmTs,
+        ...eodDoneView({ entries: logged, source: `<${permalink(review.channel, review.ts)}|EOD>` }),
+      })
+      .catch((err) => logger.warn(`could not update EOD card: ${err.message}`));
+  }
+  if (!logged.length) return;
+  const week = weekContaining(
+    logged
+      .map((r) => r.spentOn)
+      .sort()
+      .at(-1),
+  );
+  const weekEntries = await user.api.timeEntries({ from: week.from, to: week.to, userId: user.id }).catch(() => []);
+  const summary = loggedView({
+    results: logged,
+    weekLabel: week.from === currentWeek(TZ).from ? "This week" : `Week of ${prettyWeek(week)}`,
+    weekTotal: weekEntries.reduce((sum, e) => sum + e.hours, 0),
+    urls,
+  });
+  const note = failed
+    ? [
+        {
+          type: "context",
+          elements: [
+            { type: "mrkdwn", text: ":warning: Some items weren't logged. Press *Review & log time* on your EOD to finish them." },
+          ],
+        },
+      ]
+    : [];
+  await deliver(dm, {
+    ...summary,
+    blocks: [...summary.blocks, ...note],
+    ...(summary.fallback ? { fallback: { ...summary.fallback, blocks: [...summary.fallback.blocks, ...note] } } : {}),
+  });
+}
+
+/** What the summary needs from a logged entry (kept in the review between form pages). */
+const slimResult = (r) => ({
+  hours: r.hours,
+  spentOn: r.spentOn,
+  activityName: r.activityName,
+  created: r.created,
+  wp: { id: r.wp.id, subject: r.wp.subject, _links: { project: { title: r.wp._links?.project?.title } } },
 });
 
 app.action("eod_dismiss", async ({ ack, body, action, client }) => {

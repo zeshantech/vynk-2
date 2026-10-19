@@ -76,6 +76,16 @@ test("slack formatting", () => {
   assert.deepEqual(summary(r), ["max: PR #1 merged"]);
 });
 
+test("long headings and short project names", () => {
+  const r = parseEod(
+    "EODs (Oct 12–16, 40h)\nMonday, October 12, 2026\n PRI / KPI Revenue Center (Backend B04):\n• Planned and reviewed Backend B04\n• Added the weekly scheduler",
+    [...projects, { id: 9, name: "PRI (mike's project)", identifier: "pri-mike-s-project" }],
+    { today },
+  );
+  assert.deepEqual(summary(r), ["PRI (mike's project): Planned and reviewed Backend B04 | Added the weekly scheduler"]);
+  assert.deepEqual(r.sections[0].items.map((i) => i.date), ["2026-10-12", "2026-10-12"]);
+});
+
 test("dates", () => {
   assert.equal(findDate("EOD 18 Oct", today), "2026-10-18");
   assert.equal(findDate("Oct 18, 2026", today), "2026-10-18");

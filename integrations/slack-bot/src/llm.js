@@ -80,8 +80,9 @@ Rules:
 - Keep titles short and clean (no bullets, emojis, links or durations).`;
 
 export class EodReader {
-  constructor({ apiKey, model }) {
+  constructor({ apiKey, model, tokensPerMinute = 8000 }) {
     this.model = model;
+    this.tokensPerMinute = tokensPerMinute;
     this.client = apiKey ? new Groq({ apiKey, timeout: 45_000, maxRetries: 2 }) : null;
   }
 
@@ -105,18 +106,36 @@ export class EodReader {
         client: p.client ?? null,
         author_is_member: p.member,
       })),
-      open_tasks: tasks.map((t) => ({ id: t.id, project_id: t.projectId, title: t.subject })),
+      open_tasks: tasks.map((t) => ({ id: t.id, project_id: t.projectId, title: t.subject.slice(0, 80) })),
     };
-    const completion = await this.client.chat.completions.create({
+    const userContent = `Context (JSON):\n${JSON.stringify(context)}\n\nSlack message:\n<<<\n${text.slice(0, 8000)}\n>>>`;
+    // Groq counts prompt + max answer against the per-minute token limit, so size the answer to fit under it.
+    const promptTokens = Math.ceil((SYSTEM.length + JSON.stringify(RESULT_SCHEMA).length + userContent.length) / 3.2);
+    const maxAnswer = Math.max(1500, Math.min(6000, this.tokensPerMinute - promptTokens - 300));
+    const request = {
       model: this.model,
       temperature: 0,
-      max_completion_tokens: 12000,
+      reasoning_effort: "low",
+      max_completion_tokens: maxAnswer,
       response_format: { type: "json_schema", json_schema: { name: "eod_report", strict: true, schema: RESULT_SCHEMA } },
       messages: [
         { role: "system", content: SYSTEM },
-        { role: "user", content: `Context (JSON):\n${JSON.stringify(context)}\n\nSlack message:\n<<<\n${text.slice(0, 8000)}\n>>>` },
+        { role: "user", content: userContent },
       ],
-    });
+    };
+    let completion;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        completion = await this.client.chat.completions.create(request);
+        break;
+      } catch (err) {
+        // Free Groq plans allow a few thousand tokens per minute: wait for the window and try again.
+        const wait = Number(err?.headers?.get?.("retry-after") ?? err?.headers?.["retry-after"] ?? 0);
+        const rateLimited = err?.status === 429 || err?.error?.error?.code === "rate_limit_exceeded";
+        if (!rateLimited || attempt >= 3 || wait > 120) throw err;
+        await new Promise((resolve) => setTimeout(resolve, (wait || 20) * 1000 + 500));
+      }
+    }
     const content = completion.choices?.[0]?.message?.content;
     if (!content) throw new Error("The model returned no result");
     return sanitize(JSON.parse(content), projects, tasks);

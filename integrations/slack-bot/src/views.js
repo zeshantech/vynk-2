@@ -407,9 +407,10 @@ export function connectView(url) {
 
 export function eodReviewView({ review, source, urls }) {
   const projects = new Set(review.items.map((i) => i.projectName));
-  const rows = [[bold("Project"), bold("Item"), bold("Task"), bold("Time")]];
+  const rows = [[bold("Date"), bold("Project"), bold("Item"), bold("Task"), bold("Time")]];
   for (const item of review.items) {
     rows.push([
+      item.date ? prettyDate(item.date) : "–",
       item.projectName,
       item.text,
       item.taskId ? link(item.taskSubject, urls.wp(item.taskId)) : "New task",
@@ -419,8 +420,8 @@ export function eodReviewView({ review, source, urls }) {
   const notes = [];
   if (review.items.some((i) => i.suggested))
     notes.push("≈ = estimated from the total in your EOD, by how big each item looks. Adjust it when you review.");
-  if (!review.date) notes.push("Your EOD doesn't say which day this was, so pick the date for each item when you review.");
-  if (review.extra) notes.push(`+${review.extra} more item${review.extra === 1 ? "" : "s"} not shown (max 15 per EOD).`);
+  if (review.items.some((i) => !i.date)) notes.push("Some items have no date in your EOD; pick it when you review.");
+  if (review.extra) notes.push(`+${review.extra} more item${review.extra === 1 ? "" : "s"} not shown (max 60 per EOD).`);
   if (review.noAccess.length) notes.push(`Skipped, you can't log time in: ${review.noAccess.map(escape).join(", ")}.`);
   if (review.unmatched.length)
     notes.push(
@@ -431,7 +432,7 @@ export function eodReviewView({ review, source, urls }) {
     );
   const before = [
     header(
-      `Your EOD  ·  ${review.date ? prettyDate(review.date) : "date not in EOD"}${review.part ? `  ·  ${review.part.index}/${review.part.of}` : ""}`,
+      `Your EOD${review.date ? `  ·  ${review.dateTo && review.dateTo !== review.date ? prettyRange(review.date, review.dateTo) : prettyDate(review.date)}` : ""}`,
     ),
     context(
       `${review.items.length} item${review.items.length === 1 ? "" : "s"} in ${projects.size} project${projects.size === 1 ? "" : "s"}  ·  from your ${source}`,
