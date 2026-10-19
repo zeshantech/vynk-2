@@ -888,7 +888,7 @@ function formState(values = {}) {
   const out = {};
   for (const [blockId, actions] of Object.entries(values)) {
     const v = Object.values(actions)[0] ?? {};
-    out[blockId] = { text: v.value ?? undefined, option: v.selected_option ?? undefined, date: v.selected_date ?? undefined };
+    out[blockId.replace(/@.*$/, "")] = { text: v.value ?? undefined, option: v.selected_option ?? undefined, date: v.selected_date ?? undefined };
   }
   return out;
 }
@@ -921,7 +921,7 @@ function entryBlocks(n, { projectOptions, activities, prev = {}, preset = {} }) 
     },
     {
       type: "input",
-      block_id: `e${n}_task`,
+      block_id: `e${n}_task@${projectId}`,
       label: plain("Task"),
       hint: plain("Search the project's tasks, or type a name to create a new one"),
       element: {
@@ -986,15 +986,16 @@ function readEntry(values, n, errors, { optionalHours = false, comment = "" } = 
   const rawHours = values[`e${n}_hours`]?.value.value?.trim();
   if (!rawHours && optionalHours) return { skip: true };
   const projectId = Number(Object.values(values[`e${n}_project`] ?? {})[0]?.selected_option?.value) || null;
-  const task = Object.values(values[`e${n}_task`] ?? {})[0]?.selected_option?.value;
+  const taskBlock = Object.keys(values).find((k) => k === `e${n}_task` || k.startsWith(`e${n}_task@`)) ?? `e${n}_task`;
+  const task = Object.values(values[taskBlock] ?? {})[0]?.selected_option?.value;
   const spentOn = values[`e${n}_date`]?.value.selected_date;
   const durationError = hoursError(rawHours);
   if (!projectId) errors[`e${n}_project`] = "Choose a project";
-  if (!task) errors[`e${n}_task`] = "Choose a task or type a new one";
+  if (!task) errors[taskBlock] = "Choose a task or type a new one";
   else {
     const taskProject = Number(task.match(/^wp:\d+:(\d+)$/)?.[1]);
     if (taskProject && projectId && taskProject !== projectId) {
-      errors[`e${n}_task`] = "This task belongs to another project. Pick one from the selected project or type a new one.";
+      errors[taskBlock] = "This task belongs to another project. Pick one from the selected project or type a new one.";
     }
   }
   if (!spentOn) errors[`e${n}_date`] = "Choose the day you did this";
@@ -1123,9 +1124,13 @@ app.action("lt_entry_project", async ({ ack, body, action, client, logger }) => 
     const v = body.view;
     const projectId = Number(action.selected_option.value);
     const blocks = v.blocks.map((b) => {
-      if (b.block_id !== `e${n}_task`) return b;
+      if (b.block_id !== `e${n}_task` && !String(b.block_id).startsWith(`e${n}_task@`)) return b;
       const { initial_option, ...element } = b.element;
-      return { ...b, element: { ...element, action_id: `lt_task_${projectId}`, placeholder: plain("Search or type a new task") } };
+      return {
+        ...b,
+        block_id: `e${n}_task@${projectId}`,
+        element: { ...element, action_id: `lt_task_${projectId}`, placeholder: plain("Search or type a new task") },
+      };
     });
     const view = {
       type: "modal",
