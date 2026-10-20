@@ -412,7 +412,7 @@ export function eodReviewView({ review, source, urls }) {
     rows.push([
       item.date ? prettyDate(item.date) : "–",
       item.projectName,
-      item.text,
+      `${item.text}${item.subtasks?.length ? `  (+${item.subtasks.length} subtasks)` : ""}`,
       item.taskId ? link(item.taskSubject, urls.wp(item.taskId)) : "New task",
       item.hours ? `${item.suggested ? "≈ " : ""}${formatHours(item.hours)}` : "–",
     ]);

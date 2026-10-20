@@ -691,6 +691,7 @@ app.view("create_task", async ({ ack, body, view, client, logger }) => {
 // ---------- time ----------
 
 const MAX_ENTRIES = 8;
+const MAX_SUBTASKS = 6;
 
 /** Saves several entries; checks the daily limit for all of them before saving any. */
 async function logEntries(user, entries) {
@@ -706,7 +707,9 @@ async function logEntries(user, entries) {
     } else if (!allowed(perms.createTask, projectId)) {
       throw new UserFacingError("You can't create tasks in this project. Pick an existing task instead.");
     }
-    if (e.subtask && !allowed(perms.createTask, projectId)) throw new UserFacingError("You can't create subtasks in this project.");
+    if ((e.subtask || e.subtasks?.length) && !allowed(perms.createTask, projectId)) {
+      throw new UserFacingError("You can't create subtasks in this project.");
+    }
     if (!allowed(perms.logTime, projectId)) throw new UserFacingError("You can't log time in this project.");
   }
   const dates = entries.map((e) => e.spentOn).sort();
@@ -735,9 +738,17 @@ async function logEntries(user, entries) {
           })
         : null;
       if (!wp) {
-        wp = await user.api.createTask({ projectId: e.projectId, subject: e.newTask, assigneeId: user.id }).catch(noCreateRights);
+        wp = await user.api
+          .createTask({ projectId: e.projectId, subject: e.newTask, assigneeId: user.id, description: e.description })
+          .catch(noCreateRights);
         created.push("new task");
       }
+      const taskId = wp.id;
+      const subtaskProject = e.projectId ?? idFromLink(wp._links?.project);
+      for (const subject of e.subtasks ?? []) {
+        await user.api.createTask({ projectId: subtaskProject, subject, assigneeId: user.id, parentId: taskId }).catch(noCreateRights);
+      }
+      if (e.subtasks?.length) created.push(`${e.subtasks.length} subtask${e.subtasks.length === 1 ? "" : "s"}`);
       if (e.subtask) {
         wp = await user.api
           .createTask({
@@ -749,7 +760,7 @@ async function logEntries(user, entries) {
           .catch(noCreateRights);
         created.push("new subtask");
       }
-      const entry = await op
+      const entry = await user.api
         .logTime({
           userId: user.id,
           workPackageId: wp.id,
@@ -1015,6 +1026,32 @@ function entryBlocks(n, { projectOptions, activities, prev = {}, preset = {} }) 
           ),
         ]
       : []),
+    ...(preset.ai
+      ? [
+          input(
+            `e${n}_desc`,
+            "Description",
+            {
+              type: "plain_text_input",
+              multiline: true,
+              placeholder: plain("Optional: what was done"),
+              ...text("desc", preset.description),
+            },
+            true,
+          ),
+          input(
+            `e${n}_subs`,
+            "Subtasks",
+            {
+              type: "plain_text_input",
+              multiline: true,
+              placeholder: plain("Optional: one subtask per line"),
+              ...text("subs", preset.subtasks),
+            },
+            true,
+          ),
+        ]
+      : []),
     ...(preset.notes === false
       ? []
       : [input(`e${n}_notes`, "Notes", { type: "plain_text_input", placeholder: plain("What did you do?"), ...text("notes") }, true)]),
@@ -1045,9 +1082,16 @@ function readEntry(values, n, errors, { optionalHours = false, comment = "" } = 
   else if (spentOn > todayIn(TZ)) errors[`e${n}_date`] = "You can't log time in the future";
   if (durationError) errors[`e${n}_hours`] = durationError;
   if (values[`e${n}_act`] && !values[`e${n}_act`].value.selected_option) errors[`e${n}_act`] = "Choose an activity";
+  const subtasks = (values[`e${n}_subs`]?.value.value ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^\s*(?:[-•*]|\d+[.)])\s*/, "").trim())
+    .filter(Boolean);
+  if (subtasks.length > MAX_SUBTASKS) errors[`e${n}_subs`] = `Up to ${MAX_SUBTASKS} subtasks per task`;
   return {
     entry: {
       n,
+      description: values[`e${n}_desc`]?.value.value?.trim() || null,
+      subtasks: subtasks.slice(0, MAX_SUBTASKS).map((t) => t.slice(0, 200)),
       projectId,
       workPackageId: task?.startsWith("wp:") ? parseInt(task.slice(3), 10) : null,
       newTask: task?.startsWith("new:") ? task.slice(4).trim() : null,
@@ -1486,7 +1530,7 @@ const EOD_CHANNELS = (process.env.EOD_CHANNELS || "test-vynk")
   .map((s) => s.trim().replace(/^#/, "").toLowerCase())
   .filter(Boolean);
 const MAX_EOD_ITEMS = 60;
-const EOD_PAGE_SIZE = 12;
+const EOD_PAGE_SIZE = 9;
 // Project and activity choices per open EOD form, so the next page can be built within Slack's 3 seconds.
 const eodFormChoices = new Map();
 const channelNames = new Map();
@@ -1699,6 +1743,9 @@ function eodPageView(review, page, { projectOptions, activities }) {
           optionalHours: true,
           subtask: false,
           notes: false,
+          ai: true,
+          description: item.description || undefined,
+          subtasks: item.subtasks?.length ? item.subtasks.join("\n") : undefined,
         },
       }),
     );
