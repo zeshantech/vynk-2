@@ -83,6 +83,15 @@ jobs:
           done
           echo "health check failed for $url (last status: $code)"; exit 1
 
+      - name: Diagnostics (only when something failed)
+        if: ${{ failure() }}
+        env:
+          TARGET: ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}
+          SSHPASS: ${{ secrets.DEPLOY_SSH_PASSWORD }}
+        run: |
+          OPTS="-o PubkeyAuthentication=no -o StrictHostKeyChecking=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=60"
+          sshpass -e ssh $OPTS "$TARGET" "cd ~/vynk-op && docker compose ps -a && echo '--- openproject logs ---' && docker compose logs --no-color --tail 120 openproject && echo '--- disk ---' && df -h / | tail -1" | grep -viE "password|secret|token|DATABASE_URL" || true
+
       - name: Ensure time tracking activities
         env:
           TARGET: ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}
