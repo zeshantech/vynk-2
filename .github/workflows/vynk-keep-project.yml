@@ -21,7 +21,7 @@ jobs:
           install -m 700 -d ~/.ssh
           ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
           OPTS="-o PubkeyAuthentication=no -o StrictHostKeyChecking=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=60"
-          sshpass -e ssh $OPTS "$TARGET" 'cd ~/vynk-op && docker compose run --rm --no-deps -T --entrypoint bash openproject -lc "cd /app && RAILS_ENV=production bundle exec rails runner \"Project.exists? || Project.create!(name: %q(Vynk), identifier: %q(vynk), public: false); puts %q(projects: ) + Project.count.to_s\"" 2>&1 | tail -3 && docker compose restart openproject'
+          sshpass -e ssh $OPTS "$TARGET" 'cd ~/vynk-op && docker compose run --rm --no-deps -T --entrypoint bash openproject -lc "cd /app && RAILS_ENV=production bundle exec rails runner \"Project.exists? || Project.create!(name: %q(Vynk), identifier: %q(vynk), public: false, workspace_type: %q(project)); puts %q(projects: ) + Project.count.to_s\"" 2>&1 | grep -v -E "WARN|INFO" | tail -8 && docker compose restart openproject'
       - name: Wait until healthy
         run: |
           for i in $(seq 1 60); do
