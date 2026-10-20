@@ -6,6 +6,8 @@ services:
     image: openproject/openproject:${OP_TAG:-17}
     restart: unless-stopped
     env_file: .env
+    environment:
+      OPENPROJECT_APP__TITLE: ${OPENPROJECT_APP__TITLE:-Vynk}
     volumes:
       - op_assets:/var/openproject/assets
 
