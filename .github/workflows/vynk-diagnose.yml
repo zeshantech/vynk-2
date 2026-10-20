@@ -1,0 +1,22 @@
+name: Vynk Diagnose
+
+# Prints container status and recent logs from the production server. Run manually.
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Status and logs
+        env:
+          TARGET: ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          SSHPASS: ${{ secrets.DEPLOY_SSH_PASSWORD }}
+        run: |
+          sudo apt-get install -y sshpass >/dev/null
+          install -m 700 -d ~/.ssh
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+          OPTS="-o PubkeyAuthentication=no -o StrictHostKeyChecking=yes"
+          sshpass -e ssh $OPTS "$TARGET" "cd ~/vynk-op && docker compose ps -a && echo '--- openproject logs ---' && docker compose logs --no-color --tail 150 openproject && echo '--- proxy logs ---' && docker compose logs --no-color --tail 15 proxy && echo '--- disk/memory ---' && df -h / | tail -1 && free -m" | grep -viE "password|secret|token|DATABASE_URL|apikey" || true
