@@ -160,3 +160,23 @@ function vkSimpleLoginError() {
 ["DOMContentLoaded", "turbo:load", "turbo:render"].forEach((e) => document.addEventListener(e, vkSimpleLoginError));
 new MutationObserver(vkSimpleLoginError).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
 vkSimpleLoginError();
+
+// Dark mode is disabled for now (the proxy serves every page in light mode). Keep the options in
+// My account → Interface but greyed out, so a saved Dark/Sync choice falls back to Light.
+function vkDisableDarkModeChoice() {
+  const select = document.querySelector('select[data-my--look-and-feel-target="themeSelect"]');
+  if (!select || select.dataset.vkDarkDisabled) return;
+  select.dataset.vkDarkDisabled = "1";
+  for (const option of select.options) {
+    if (option.value === "dark" || option.value === "sync_with_os") {
+      option.disabled = true;
+      option.textContent = `${option.textContent} (coming soon)`;
+    }
+  }
+  if (select.selectedOptions[0]?.disabled) {
+    select.value = "light";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+}
+["DOMContentLoaded", "turbo:load", "turbo:render"].forEach((e) => document.addEventListener(e, vkDisableDarkModeChoice));
+vkDisableDarkModeChoice();
