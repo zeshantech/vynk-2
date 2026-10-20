@@ -1481,7 +1481,7 @@ function startReminderLoop() {
 // A report posted in an EOD channel becomes a private review card for its author. On approval the
 // author adds the time per item and the bot creates/uses tasks and logs the time as them.
 
-const EOD_CHANNELS = (process.env.EOD_CHANNELS || "eod-updates")
+const EOD_CHANNELS = (process.env.EOD_CHANNELS || "test-vynk")
   .split(",")
   .map((s) => s.trim().replace(/^#/, "").toLowerCase())
   .filter(Boolean);
