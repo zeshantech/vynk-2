@@ -3,7 +3,7 @@ import http from "node:http";
 import bolt from "@slack/bolt";
 import { NotSignedInError, OpenProject, OpenProjectError } from "./openproject.js";
 import { Sessions, resultPage } from "./auth.js";
-import { cleanSlackText, matchTask, normalize, parseEod } from "./eod.js";
+import { cleanSlackText, findDate, matchTask, normalize, parseEod } from "./eod.js";
 import { EodReader } from "./llm.js";
 import { Store } from "./store.js";
 import { parseCreateTask, parseLogTime } from "./commands.js";
@@ -61,6 +61,7 @@ const eodReader = new EodReader({
   apiKey: process.env.GROQ_API_KEY,
   model: process.env.EOD_MODEL || "openai/gpt-oss-20b",
   tokensPerMinute: Number(process.env.GROQ_TOKENS_PER_MINUTE || 8000),
+  effort: process.env.EOD_REASONING || "medium",
 });
 
 const app = new App({
@@ -694,7 +695,11 @@ const MAX_ENTRIES = 8;
 const MAX_SUBTASKS = 6;
 
 /** Saves several entries; checks the daily limit for all of them before saving any. */
-async function logEntries(user, entries) {
+/**
+ * `taskCache` remembers tasks created in this batch (or earlier pages of the same EOD), so a task
+ * listed on several days is created once and each day's time goes to it.
+ */
+async function logEntries(user, entries, taskCache = {}) {
   const perms = await permissions(user);
   for (const e of entries) {
     let projectId = e.projectId;
@@ -737,18 +742,28 @@ async function logEntries(user, entries) {
             throw err;
           })
         : null;
+      const taskKey = `${e.projectId}|${normalize(e.newTask ?? "")}`;
+      if (!wp && taskCache[taskKey]) wp = await user.api.workPackage(taskCache[taskKey]).catch(() => null);
       if (!wp) {
         wp = await user.api
           .createTask({ projectId: e.projectId, subject: e.newTask, assigneeId: user.id, description: e.description })
           .catch(noCreateRights);
+        taskCache[taskKey] = wp.id;
         created.push("new task");
       }
       const taskId = wp.id;
       const subtaskProject = e.projectId ?? idFromLink(wp._links?.project);
+      let newSubtasks = 0;
       for (const subject of e.subtasks ?? []) {
-        await user.api.createTask({ projectId: subtaskProject, subject, assigneeId: user.id, parentId: taskId }).catch(noCreateRights);
+        const subKey = `${taskId}|sub|${normalize(subject)}`;
+        if (taskCache[subKey]) continue;
+        const sub = await user.api
+          .createTask({ projectId: subtaskProject, subject, assigneeId: user.id, parentId: taskId })
+          .catch(noCreateRights);
+        taskCache[subKey] = sub.id;
+        newSubtasks++;
       }
-      if (e.subtasks?.length) created.push(`${e.subtasks.length} subtask${e.subtasks.length === 1 ? "" : "s"}`);
+      if (newSubtasks) created.push(`${newSubtasks} subtask${newSubtasks === 1 ? "" : "s"}`);
       if (e.subtask) {
         wp = await user.api
           .createTask({
@@ -1569,23 +1584,24 @@ async function readEod({ user, report, mine }) {
   const rules = () => readEodWithRules(report.text, projects, today);
 
   if (!eodReader.enabled) return rules();
-  const text = ` ${normalize(report.text)} `;
-  const named = [...mine.values()].filter((p) =>
-    [p.name, p.identifier, p.name.replace(/\([^)]*\)/g, " ")].some((k) => normalize(k) && text.includes(` ${normalize(k)} `)),
-  );
-  const candidates = (named.length ? named : mine.size <= 5 ? [...mine.values()] : []).slice(0, 10);
-  const tasks = [];
-  for (const p of candidates) {
-    const list = await cached(`tasks:${user.id}:${p.id}`, 30_000, () => user.api.projectTasks(p.id)).catch(() => []);
-    tasks.push(...list.slice(0, 30).map((t) => ({ id: t.id, subject: t.subject, projectId: p.id })));
-  }
   let result;
   try {
-    result = await eodReader.read({ text: report.text, projects, tasks, today });
+    // Existing tasks are matched afterwards by title; showing them to the model makes it copy lines one by one.
+    result = await eodReader.read({ text: report.text, projects, tasks: [], today });
   } catch (err) {
     app.logger.error("LLM could not read the EOD, using the rule-based parser", err);
     return rules();
   }
+  // Only keep dates that are actually written in the report.
+  const written = new Set(
+    report.text
+      .split(/\r?\n/)
+      .map((line) => findDate(cleanSlackText(line), today))
+      .filter(Boolean),
+  );
+  if (written.size) for (const item of result.items) if (item.date && !written.has(item.date)) item.date = null;
+  if (result.date && written.size && !written.has(result.date)) result.date = null;
+
   // The model sometimes misses the projects entirely; the rules then often still find them.
   const placed = (r) => r.items.filter((i) => i.projectId || explicitProject(i.mention, all)).length;
   if (!result.isEod || placed(result) === 0) {
@@ -1824,7 +1840,8 @@ app.view("eod_log", async ({ ack, body, view, client, logger }) => {
     if (entries.length) {
       let result;
       try {
-        result = await logEntries(user, entries);
+        review.taskCache ??= {};
+        result = await logEntries(user, entries, review.taskCache);
       } catch (err) {
         if (!(err instanceof UserFacingError)) throw err;
         result = errorText(err);

@@ -92,9 +92,9 @@ export function findDate(text, today) {
   let m = text.match(/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/);
   if (m) return build(Number(m[1]), Number(m[2]), Number(m[3]));
   const monthRe = MONTHS.join("|");
-  m = text.match(new RegExp(String.raw`\b(\d{1,2})(?:st|nd|rd|th)?\s+(${monthRe})[a-z]*\.?,?\s*(20\d{2})?\b`, "i"));
+  m = text.match(new RegExp(String.raw`\b(\d{1,2})(?:st|nd|rd|th)?[\s-]+(${monthRe})[a-z]*\.?[,\s-]*(20\d{2})?\b`, "i"));
   if (m) return build(m[3] ? Number(m[3]) : 0, MONTHS.indexOf(m[2].toLowerCase().slice(0, 3)) + 1, Number(m[1]));
-  m = text.match(new RegExp(String.raw`\b(${monthRe})[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s*(20\d{2})?\b`, "i"));
+  m = text.match(new RegExp(String.raw`\b(${monthRe})[a-z]*\.?[\s-]+(\d{1,2})(?:st|nd|rd|th)?[,\s-]*(20\d{2})?\b`, "i"));
   if (m) return build(m[3] ? Number(m[3]) : 0, MONTHS.indexOf(m[1].toLowerCase().slice(0, 3)) + 1, Number(m[2]));
   m = text.match(/\b(\d{1,2})[/.](\d{1,2})(?:[/.](20\d{2}|\d{2}))?\b/);
   if (m) {

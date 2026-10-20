@@ -94,6 +94,8 @@ test("dates", () => {
   assert.equal(findDate("eod 25 Dec", today), "2025-12-25");
   assert.equal(findDate("eod 31 Feb", today), null);
   assert.equal(findDate("no date here", today), null);
+  assert.equal(findDate("EOD - 20-Oct-2026", today), "2026-10-20");
+  assert.equal(findDate("Monday, August 17, 2026", today), "2026-08-17");
 });
 
 test("matchTask", () => {

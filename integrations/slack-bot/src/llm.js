@@ -13,8 +13,7 @@ const ITEM_SCHEMA = {
     project_mention: { type: "string", description: "How the message referred to the project (empty if not mentioned)." },
     title: {
       type: "string",
-      description:
-        "Professional task title in sentence case, max 80 chars, that names the outcome (e.g. 'Update signup and login button colours'). Never a copy of the author's wording.",
+      description: "Professional task title in sentence case, max 80 chars, that names the outcome. Never a copy of the author's wording.",
     },
     description: {
       type: "string",
@@ -96,45 +95,38 @@ const RESULT_SCHEMA = {
   required: ["is_eod", "date", "items", "hours_groups"],
 };
 
-const SYSTEM = `You are a careful senior project manager. A teammate posted an end-of-day (EOD) message in Slack. Turn it into the tasks you would record in the team's project tracker, with the time spent.
+const SYSTEM = `You are a senior project manager keeping a team's project tracker clean. A teammate posted an end-of-day (EOD) message in Slack. Your job is to compress it into a short, organized list of tasks and log their time.
 
-How to think:
-- A task is a unit of work someone would track, not a line of the message. Read the whole message first, then group.
-  Lines that are small variations of the same change (for example "change signup button colour" and "change login button colour") are ONE task: "Update signup and login button colours".
-  Lines that are different pieces of a larger piece of work (a feature built in several steps) are ONE task with subtasks.
-  Unrelated work stays separate tasks.
-- Write titles the way a professional would: a short phrase naming the outcome, in sentence case. Do not copy the author's wording, casing, typos or bullet text.
-- description: 1-3 plain sentences on what was done, only when it adds something. Otherwise an empty string. Never invent facts that are not in the message.
-- subtasks: only when the task has clearly separate parts worth tracking (usually 3 or more lines of one feature). Use short titles; the first subtask must not just repeat the task title. Small tasks have none. At most 6.
-  A small unrelated fix (a typo, a config tweak) is its own task, never a subtask of something else.
-  A task that has subtasks always gets a description.
-- Routine admin with no project value (replying to emails, chatting) is not a task.
+Organize and compress:
+- Read the whole message first and understand the work, then plan the tasks. Never map one line of the message to one task.
+- Produce the smallest set of tasks a project manager would actually track. Group lines by feature, milestone, deliverable or area of work. Work that serves the same goal is one task, even when written as several lines.
+- Put the distinct pieces of a task in subtasks. A task with several pieces should have them as subtasks rather than becoming several tasks.
+- Small, routine items (merging a PR, writing follow-up notes, a quick review, a minor fix connected to the same work) belong inside the task they relate to, as a subtask or in the description, not as their own task.
+- Keep genuinely unrelated work as separate tasks. Meetings that are part of a task's work stay with that task.
+- As a guide, a normal day is 1 to 4 tasks per project. Many lines in a day almost always means fewer tasks with subtasks.
+- When the same task continues over several days, use exactly the same title on each day, so the time goes to one task. Its subtasks on each day are the pieces done that day.
 
-Example. Message:
-"Vynk: built webhook receiver, added signature check, wrote retry queue, added dead-letter table, wrote tests, fixed typo in readme"
-Correct result: TWO tasks.
- 1. title "Build webhook delivery pipeline", description "Built the endpoint that receives webhooks, with signature verification, a retry queue for failed deliveries, a dead-letter table and tests.", subtasks ["Webhook receiver with signature check", "Retry queue for failed deliveries", "Dead-letter table", "Tests"]
- 2. title "Fix typo in README", description "", subtasks []
-Wrong: one task per line, or putting the typo fix under the webhook task.
+Write it professionally:
+- title: a short phrase naming the outcome, in sentence case. If the message names a milestone or version (for example in a heading), start the title with it. Never copy the author's wording, casing, typos or bullet text, and don't repeat the project's name in it.
+- description: 1 to 3 plain sentences summarising what was done, for a teammate. Required when a task has subtasks; otherwise only when it adds something. Never invent facts that are not in the message.
+- subtasks: short titles for the separate pieces done. None for a task that is a single small change. At most 6. They must not repeat the task title.
 - notes: one short line for the time entry comment.
-- Only include work that was done. Skip plans for tomorrow, blockers, questions, greetings, and meetings with no project unless they clearly belong to a project.
+- Only include work that was done. Skip plans for tomorrow, blockers, questions, greetings and routine admin with no project value.
 
 Projects:
-- If the message names a project explicitly (a heading like "PRI:", a prefix, the project name, identifier or an obvious abbreviation), ALWAYS use that project, even when author_is_member is false. author_is_member is informational only; never move work to a different project because of it.
-- Otherwise map each task to a project from the list using names, identifiers, abbreviations, the project's client and its parent company.
-  Example: "chris to debug its intelligence app" belongs to the project whose client is Chris and whose name mentions intelligence, not to another Chris project.
-  Work for a company in general (not a specific product) belongs to the parent company's own project.
-  If several projects fit equally, or none fits, use null.
+- If the message names a project explicitly (a heading, a prefix, the project name, identifier or an obvious abbreviation), ALWAYS use that project, even when author_is_member is false. author_is_member is informational only; never move work to a different project because of it.
+- Otherwise map each task to a project from the list using names, identifiers, abbreviations, the project's client and its parent company. Work for a company in general (not a specific product) belongs to the parent company's own project. If several projects fit equally, or none fits, use null.
 - Prefer an existing open task when it is clearly the same work; otherwise null so a new task is created.
 
 Time:
 - Never invent time out of nothing: if no duration is written for a task or for any group containing it, hours is null.
-- When a total is written for a group (project heading "PRI ~5hrs:", a day, or the report title "Oct 12-16, 40h"), also list it in hours_groups AND give each task in that group an estimated share (hours_estimated=true): bigger or harder work gets more, small work less. Round to 0.25h. The tasks of a group must add up to its total. A total spanning several days with no per-day totals is split evenly across those days first.
-- Reports may cover several days. Give every task the date of the day heading it is listed under, or the date written for it. If no date is written anywhere, date is null.`;
+- When a total is written for a group (a project heading, a day, or the report title), also list it in hours_groups AND give each task in that group an estimated share (hours_estimated=true): bigger or harder work gets more, small work less. Round to 0.25h. The tasks of a group must add up to its total. A total spanning several days with no per-day totals is split evenly across those days first.
+- Reports may cover several days. Each task gets the date of the day it was done (its day heading or a date written for it). If no date is written anywhere, date is null.`;
 
 export class EodReader {
-  constructor({ apiKey, model, tokensPerMinute = 8000 }) {
+  constructor({ apiKey, model, tokensPerMinute = 8000, effort = "medium" }) {
     this.model = model;
+    this.effort = effort;
     this.tokensPerMinute = tokensPerMinute;
     this.client = apiKey ? new Groq({ apiKey, timeout: 45_000, maxRetries: 2 }) : null;
   }
@@ -168,7 +160,7 @@ export class EodReader {
     const request = {
       model: this.model,
       temperature: 0,
-      reasoning_effort: this.effort ?? "low",
+      reasoning_effort: this.effort,
       max_completion_tokens: maxAnswer,
       response_format: { type: "json_schema", json_schema: { name: "eod_report", strict: true, schema: RESULT_SCHEMA } },
       messages: [
@@ -177,16 +169,28 @@ export class EodReader {
       ],
     };
     let completion;
+    const sleep = (seconds) => new Promise((resolve) => setTimeout(resolve, seconds * 1000 + 500));
     for (let attempt = 1; ; attempt++) {
       try {
         completion = await this.client.chat.completions.create(request);
+        if (!completion.choices?.[0]?.message?.content && attempt < 4)
+          throw Object.assign(new Error("empty answer"), { emptyAnswer: true });
         break;
       } catch (err) {
-        // Free Groq plans allow a few thousand tokens per minute: wait for the window and try again.
+        if (attempt >= 4) throw err;
+        const code = err?.error?.error?.code;
         const wait = Number(err?.headers?.get?.("retry-after") ?? err?.headers?.["retry-after"] ?? 0);
-        const rateLimited = err?.status === 429 || err?.error?.error?.code === "rate_limit_exceeded";
-        if (!rateLimited || attempt >= 3 || wait > 120) throw err;
-        await new Promise((resolve) => setTimeout(resolve, (wait || 20) * 1000 + 500));
+        if (err?.status === 429 || code === "rate_limit_exceeded") {
+          // Free Groq plans allow a few thousand tokens per minute: wait for the window and try again.
+          if (wait > 120) throw err;
+          await sleep(wait || 20);
+        } else if (code === "json_validate_failed" || err.emptyAnswer) {
+          // The answer ran out of room (thinking uses the same budget): think less and try again.
+          request.reasoning_effort = "low";
+          await sleep(attempt === 1 ? 5 : 30);
+        } else {
+          throw err;
+        }
       }
     }
     const content = completion.choices?.[0]?.message?.content;
