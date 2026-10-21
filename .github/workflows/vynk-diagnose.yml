@@ -19,4 +19,4 @@ jobs:
           install -m 700 -d ~/.ssh
           ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
           OPTS="-o PubkeyAuthentication=no -o StrictHostKeyChecking=yes"
-          sshpass -e ssh $OPTS "$TARGET" "cd ~/vynk-op && docker compose ps -a && echo '--- openproject logs ---' && docker compose logs --no-color --tail 150 openproject && echo '--- proxy logs ---' && docker compose logs --no-color --tail 15 proxy && echo '--- disk/memory ---' && df -h / | tail -1 && free -m" | grep -viE "password|secret|token|DATABASE_URL|apikey" || true
+          sshpass -e ssh $OPTS "$TARGET" "cd ~/vynk-op && docker compose ps -a && echo '--- openproject logs ---' && docker compose logs --no-color --tail 5 openproject && echo '--- slack bot errors ---' && docker compose logs --no-color --tail 800 slack-bot | grep -A12 -E "ERROR|failed" | tail -150 && echo '--- proxy logs ---' && docker compose logs --no-color --tail 15 proxy && echo '--- disk/memory ---' && df -h / | tail -1 && free -m" | grep -viE "password|secret|token|DATABASE_URL|apikey" || true
