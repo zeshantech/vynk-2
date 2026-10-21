@@ -298,7 +298,8 @@ export class OpenProject {
       spentOn,
       comment: { raw: comment ?? "" },
       _links: {
-        user: { href: `/api/v3/users/${userId}` },
+        // A person's own session logs as that person; Vynk refuses to write the user link for Members.
+        ...(this.apiKeyAuth ? { user: { href: `/api/v3/users/${userId}` } } : {}),
         workPackage: { href: `/api/v3/work_packages/${workPackageId}` },
         ...(activityId ? { activity: { href: `/api/v3/time_entries/activities/${activityId}` } } : {}),
       },

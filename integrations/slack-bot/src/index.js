@@ -156,7 +156,8 @@ function errorText(err) {
 
 /** Sends a reply; if Slack rejects the table block, resends with the monospace fallback. */
 async function deliver(send, msg) {
-  const { fallback, failed, results, ...main } = msg;
+  const { fallback, failed, results, ...rest } = msg;
+  const main = { text: "Vynk update", ...rest };
   if (!fallback) return send(main);
   try {
     const res = await send(main);
