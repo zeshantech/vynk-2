@@ -316,20 +316,22 @@ export class OpenProject {
     }
   }
 
+  // Filtering by person happens here, not in Vynk: Members get "User filter has invalid values" for it.
   async timeEntries({ from, to, userId }) {
     const list = [{ spent_on: { operator: "<>d", values: [from, to] } }];
-    if (userId) list.push({ user: { operator: "=", values: [String(userId)] } });
     const data = await this.request("GET", `/api/v3/time_entries?pageSize=1000&filters=${filters(list)}`);
-    return (data?._embedded?.elements ?? []).map((e) => ({
-      hours: fromIsoDuration(e.hours),
-      spentOn: e.spentOn,
-      userId: idFromHref(e._links?.user?.href),
-      userName: e._links?.user?.title,
-      workPackageId: idFromHref(e._links?.workPackage?.href ?? e._links?.entity?.href),
-      workPackageTitle: e._links?.workPackage?.title ?? e._links?.entity?.title,
-      projectId: idFromHref(e._links?.project?.href),
-      projectTitle: e._links?.project?.title,
-      comment: e.comment?.raw ?? "",
-    }));
+    return (data?._embedded?.elements ?? [])
+      .map((e) => ({
+        hours: fromIsoDuration(e.hours),
+        spentOn: e.spentOn,
+        userId: idFromHref(e._links?.user?.href),
+        userName: e._links?.user?.title,
+        workPackageId: idFromHref(e._links?.workPackage?.href ?? e._links?.entity?.href),
+        workPackageTitle: e._links?.workPackage?.title ?? e._links?.entity?.title,
+        projectId: idFromHref(e._links?.project?.href),
+        projectTitle: e._links?.project?.title,
+        comment: e.comment?.raw ?? "",
+      }))
+      .filter((e) => !userId || e.userId === Number(userId));
   }
 }

@@ -746,7 +746,7 @@ async function logEntries(user, entries, taskCache = {}) {
       if (!wp && taskCache[taskKey]) wp = await user.api.workPackage(taskCache[taskKey]).catch(() => null);
       if (!wp) {
         wp = await user.api
-          .createTask({ projectId: e.projectId, subject: e.newTask, assigneeId: user.id, description: e.description })
+          .createTask({ projectId: e.projectId, subject: e.newTask, assigneeId: e.assigneeId ?? user.id, description: e.description })
           .catch(noCreateRights);
         taskCache[taskKey] = wp.id;
         created.push("new task");
@@ -1041,6 +1041,16 @@ function entryBlocks(n, { projectOptions, activities, prev = {}, preset = {} }) 
           ),
         ]
       : []),
+    ...(preset.assignee
+      ? [
+          input(
+            `e${n}_assignee`,
+            "Assignee (for a new task)",
+            { type: "users_select", placeholder: plain("Who should do it?"), initial_user: preset.assignee },
+            true,
+          ),
+        ]
+      : []),
     ...(preset.ai
       ? [
           input(
@@ -1105,6 +1115,7 @@ function readEntry(values, n, errors, { optionalHours = false, comment = "" } = 
   return {
     entry: {
       n,
+      assigneeSlack: values[`e${n}_assignee`]?.value.selected_user || null,
       description: values[`e${n}_desc`]?.value.value?.trim() || null,
       subtasks: subtasks.slice(0, MAX_SUBTASKS).map((t) => t.slice(0, 200)),
       projectId,
@@ -1133,6 +1144,7 @@ function checkDailyTotals(entries, errors) {
 }
 
 function logTimeView({ projects, hidden = [], activities }, meta, prev = {}) {
+  const assignee = meta.slackUserId;
   const count = Math.min(Math.max(meta.count ?? 1, 1), MAX_ENTRIES);
   const projectOptions = projects.slice(0, 100).map((p) => option(p.name, p.id));
   const blocks = [];
@@ -1156,6 +1168,7 @@ function logTimeView({ projects, hidden = [], activities }, meta, prev = {}) {
         preset: {
           project: projectOptions.length === 1 ? projectOptions[0] : undefined,
           date: n === 1 ? todayIn(TZ) : undefined,
+          assignee,
         },
       }),
     );
@@ -1168,7 +1181,7 @@ function logTimeView({ projects, hidden = [], activities }, meta, prev = {}) {
   return {
     type: "modal",
     callback_id: "log_time",
-    private_metadata: JSON.stringify({ count, projects: entryProjects }),
+    private_metadata: JSON.stringify({ count, projects: entryProjects, slackUserId: meta.slackUserId }),
     title: plain("Log time"),
     submit: plain("Log time"),
     close: plain("Cancel"),
@@ -1183,7 +1196,7 @@ function openLogTimeModal(client, triggerId, slackUserId, prefill = {}) {
       ...(prefill.hours ? { e1_hours: { text: String(prefill.hours) } } : {}),
       ...(prefill.comment ? { e1_notes: { text: prefill.comment } } : {}),
     };
-    const view = logTimeView(await logTimeData(user), { count: 1 }, prev);
+    const view = logTimeView(await logTimeData(user), { count: 1, slackUserId }, prev);
     return { callbackId: view.callback_id, submit: view.submit.text, blocks: view.blocks, privateMetadata: view.private_metadata };
   });
 }
@@ -1327,6 +1340,9 @@ app.view("log_time", async ({ ack, body, view, client, logger }) => {
   for (let n = 1; n <= (meta.count ?? 1); n++) {
     const { entry } = readEntry(values, n, errors);
     entries.push(entry);
+  }
+  for (const e of entries) {
+    if (e.assigneeSlack) e.assigneeId = (await vynkIdFor(client, e.assigneeSlack)) ?? null;
   }
   if (!Object.keys(errors).length) checkDailyTotals(entries, errors);
   if (Object.keys(errors).length) {
