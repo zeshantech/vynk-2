@@ -252,7 +252,7 @@ document.addEventListener(
     const url = new URL(a.href, location.href);
     if (url.origin !== location.origin || url.search) return;
     const project = vkProjectOf(url.pathname) ||
-      (a.closest('#main-menu li[data-name="boards"]') && /^\/projects\/([^/]+)\/boards\/?$/.exec(url.pathname)?.[1]);
+      (a.closest('#main-menu li[data-name="boards"], #vk-pbar') && /^\/projects\/([^/]+)\/boards\/?$/.exec(url.pathname)?.[1]);
     if (!project) return;
     event.preventDefault();
     event.stopPropagation();
@@ -367,32 +367,109 @@ document.addEventListener("keydown", (e) => {
   if (search) { e.preventDefault(); search.focus(); }
 });
 
-// ---- Sidebar: a short list, with "More" for everything else ----
-function vkMoreToggle() {
-  const menu = document.querySelector("#main-menu #menu-sidebar .menu_root, #main-menu #menu-sidebar > ul, #main-menu .menu_root");
-  if (!menu || menu.querySelector(".vk-more")) return;
-  const li = document.createElement("li");
-  li.className = "vk-more";
-  const btn = document.createElement("button");
-  btn.type = "button";
-  const sync = () => { btn.textContent = document.documentElement.classList.contains("vk-menu-all") ? "Less" : "More"; };
-  btn.addEventListener("click", () => {
-    const all = document.documentElement.classList.toggle("vk-menu-all");
-    vkStore.set("vk-menu-all", all);
-    sync();
-  });
-  li.appendChild(btn);
-  menu.appendChild(li);
-  sync();
-}
-if (vkStore.get("vk-menu-all", false)) document.documentElement.classList.add("vk-menu-all");
-vkOnPage(vkMoreToggle);
+// ---- Sidebar: Home / Inbox / My work, your projects, system ----
+const VK_NAV_ICONS = {
+  home: '<path d="M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10"/>',
+  inbox: '<path d="M22 12h-6l-2 3h-4l-2-3H2M5.5 5h13L22 12v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6z"/>',
+  work: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1.3l2-1.5-2-3.4-2.3 1a7 7 0 0 0-2.2-1.3L14 3h-4l-.4 2.5a7 7 0 0 0-2.2 1.3l-2.3-1-2 3.4 2 1.5a7 7 0 0 0 0 2.6l-2 1.5 2 3.4 2.3-1a7 7 0 0 0 2.2 1.3L10 21h4l.4-2.5a7 7 0 0 0 2.2-1.3l2.3 1 2-3.4-2-1.5c.1-.4.1-.9.1-1.3z"/>',
+  help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1 1-1 1.7M12 17h.01"/>',
+};
+const vkIcon = (name) => `<svg viewBox="0 0 24 24" aria-hidden="true">${VK_NAV_ICONS[name]}</svg>`;
+let vkProjectList = null;
 
-// Overview stays reachable (under "More") without being bounced to the board.
-function vkOverviewLink() {
-  document.querySelectorAll('#main-menu li[data-name="overview"] a[href]').forEach((a) => {
-    const url = new URL(a.href, location.href);
-    if (!url.search && vkProjectOf(url.pathname)) { url.searchParams.set("overview", "1"); a.href = url.pathname + url.search; }
-  });
+function vkNavItem(href, label, icon, active) {
+  return `<a class="vk-nav-item${active ? " is-active" : ""}" href="${href}" title="${vkEsc(label)}">${icon}<span>${vkEsc(label)}</span></a>`;
 }
-vkOnPage(vkOverviewLink);
+
+function vkRenderNav(nav) {
+  const path = location.pathname;
+  const current = /^\/projects\/([^/]+)/.exec(path)?.[1];
+  const recent = vkStore.get("vk-recent", []);
+  const rank = (p) => { const i = recent.indexOf(p.identifier); return i < 0 ? recent.length : i; };
+  const projects = (vkProjectList || []).slice().sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+  const admin = document.querySelector('a[href="/admin"]');
+  nav.innerHTML = `
+    <div class="vk-nav-label">General</div>
+    ${vkNavItem("/", "Home", vkIcon("home"), path === "/")}
+    ${vkNavItem("/notifications", "Inbox", vkIcon("inbox"), path.startsWith("/notifications"))}
+    ${vkNavItem("/my/work?date=today", "My work", vkIcon("work"), path.startsWith("/my/work"))}
+    <div class="vk-nav-label">Projects <a class="vk-nav-add" href="/projects/new" title="New client">+</a></div>
+    <div class="vk-nav-projects">${projects.map((p) => `<a class="vk-nav-item vk-nav-project${decodeURIComponent(current || "") === p.identifier ? " is-active" : ""}" data-project="${vkEsc(p.identifier)}" href="/projects/${encodeURIComponent(p.identifier)}" title="${vkEsc(p.name)}"><span class="vk-dot">${vkEsc(p.name.trim().charAt(0).toUpperCase())}</span><span>${vkEsc(p.name)}</span></a>`).join("")}</div>
+    <div class="vk-nav-spacer"></div>
+    <div class="vk-nav-label">System</div>
+    ${vkNavItem("/my/account", "Settings", vkIcon("gear"), path.startsWith("/my/account"))}
+    ${admin ? vkNavItem("/admin", "Admin", vkIcon("gear"), path.startsWith("/admin")) : ""}
+    ${vkNavItem("https://www.openproject.org/docs/", "Help", vkIcon("help"), false)}`;
+}
+
+function vkNav() {
+  const sidebar = document.querySelector("#main-menu #menu-sidebar");
+  if (!sidebar) return;
+  let nav = sidebar.querySelector(":scope > .vk-nav");
+  const key = location.pathname;
+  if (nav && nav.dataset.path === key) return;
+  if (!nav) {
+    nav = document.createElement("nav");
+    nav.className = "vk-nav";
+    sidebar.append(nav);
+  }
+  nav.dataset.path = key;
+  vkRenderNav(nav);
+  if (!vkProjectList) {
+    vkProjectList = [];
+    vkLoadProjects().then((list) => { vkProjectList = list; nav.dataset.path = ""; vkNav(); }).catch(() => { vkProjectList = null; });
+  }
+}
+vkOnPage(vkNav);
+
+// ---- Project header: name, people, view tabs (Kanban / List / Calendar), Create Task ----
+const VK_TABS = [
+  { key: "boards", label: "Kanban", test: /\/boards/, board: true },
+  { key: "work_packages", label: "List", test: /\/work_packages/, path: "/work_packages" },
+  { key: "calendars", label: "Calendar", test: /\/calendars/, path: "/calendars" },
+  { key: "members", label: "Members", test: /\/members/, path: "/members" },
+  { key: "settings", label: "Settings", test: /\/settings/, path: "/settings/general" },
+];
+
+function vkProjectBar() {
+  const m = /^\/projects\/([^/]+)(\/.*)?$/.exec(location.pathname);
+  const content = document.querySelector("#content");
+  const existing = document.querySelector("#vk-pbar");
+  if (!m || VK_RESERVED.has(m[1]) || !m[2] || m[2] === "/" || !content) { existing?.remove(); return; }
+  const project = decodeURIComponent(m[1]);
+  if (existing && existing.dataset.project === project) {
+    existing.querySelectorAll(".vk-tab").forEach((t) => t.classList.toggle("is-active", VK_TABS.find((x) => x.key === t.dataset.tab).test.test(location.pathname)));
+    return;
+  }
+  existing?.remove();
+  const base = `/projects/${encodeURIComponent(project)}`;
+  const bar = document.createElement("header");
+  bar.id = "vk-pbar";
+  bar.dataset.project = project;
+  bar.innerHTML = `
+    <div class="vk-pbar-top">
+      <span class="vk-pbar-mark">${vkEsc(project.charAt(0).toUpperCase())}</span>
+      <div class="vk-pbar-title"><h2>${vkEsc(project)}</h2><p></p></div>
+      <div class="vk-people"></div>
+      <a class="vk-btn" href="${base}/members">Invite</a>
+      <a class="vk-btn vk-btn-primary" href="${base}/work_packages/create_new">+ Create Task</a>
+    </div>
+    <nav class="vk-tabs">${VK_TABS.map((t) => `<a class="vk-tab${t.test.test(location.pathname) ? " is-active" : ""}" data-tab="${t.key}" href="${t.board ? `${base}/boards` : base + t.path}">${t.label}</a>`).join("")}</nav>`;
+  content.prepend(bar);
+
+  vkApi(`/projects/${encodeURIComponent(project)}`).then((p) => {
+    if (bar.dataset.project !== project) return;
+    bar.querySelector("h2").textContent = p.name;
+    bar.querySelector(".vk-pbar-mark").textContent = p.name.trim().charAt(0).toUpperCase();
+    bar.querySelector("p").textContent = (p.description?.raw || "").split("\n")[0].slice(0, 140);
+    const filters = encodeURIComponent(JSON.stringify([{ project: { operator: "=", values: [String(p.id)] } }]));
+    return vkApi(`/memberships?pageSize=50&filters=${filters}`).then((ms) => {
+      const names = [...new Set(ms._embedded.elements.map((e) => e._links.principal?.title).filter(Boolean))];
+      const people = bar.querySelector(".vk-people");
+      people.innerHTML = names.slice(0, 5).map((n) => `<span title="${vkEsc(n)}">${vkEsc(n.trim().charAt(0).toUpperCase())}</span>`).join("") +
+        (names.length > 5 ? `<span class="vk-people-more">+${names.length - 5}</span>` : "");
+    });
+  }).catch(() => {});
+}
+vkOnPage(vkProjectBar);
