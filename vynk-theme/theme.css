@@ -1466,3 +1466,71 @@ body.controller-account:is(.action-login, .action-register, .action-lost_passwor
 }
 body.controller-account .op-account-registration--subtitle { text-align: left !important; }
 body.controller-account .op-account-registration { text-align: left; }
+
+/* =====================================================================
+   31. Simple mode — Home project launcher, short sidebar, board redirect
+   ===================================================================== */
+
+/* Home: our launcher replaces the stock welcome blocks */
+#vk-home ~ * { display: none !important; }
+#vk-home { max-width: 1100px; margin: 0 auto; padding: 8px 0 32px; }
+.vk-home-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+.vk-home-bar h1 { margin: 0 auto 0 0; font-size: 24px; font-weight: 600; letter-spacing: -0.02em; color: var(--vk-fg); }
+.vk-home-search {
+  flex: 0 1 280px; height: 38px; padding: 0 12px; border: 1px solid var(--vk-border-strong);
+  border-radius: var(--vk-radius); background: var(--vk-bg); font: inherit; color: var(--vk-fg);
+}
+.vk-home-search:focus { outline: none; border-color: var(--vk-primary); box-shadow: 0 0 0 3px var(--vk-ring); }
+.vk-home-new {
+  display: inline-flex; align-items: center; height: 38px; padding: 0 16px; border-radius: var(--vk-radius);
+  background: var(--vk-primary); color: #fff !important; font-weight: 500; text-decoration: none !important;
+  box-shadow: var(--vk-shadow-xs);
+}
+.vk-home-new:hover { background: var(--vk-primary-hover); }
+
+.vk-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.vk-card {
+  display: flex; align-items: center; gap: 12px; padding: 14px; cursor: pointer; position: relative;
+  background: var(--vk-bg); border: 1px solid var(--vk-border); border-radius: var(--vk-radius-lg);
+  box-shadow: var(--vk-shadow-xs); transition: border-color .12s, box-shadow .12s, transform .12s;
+}
+.vk-card:hover, .vk-card:focus-visible {
+  border-color: var(--vk-border-strong); box-shadow: var(--vk-shadow-sm); transform: translateY(-1px); outline: none;
+}
+.vk-card:focus-visible { box-shadow: 0 0 0 3px var(--vk-ring); }
+.vk-card-mark {
+  flex: none; width: 40px; height: 40px; display: grid; place-items: center; border-radius: 10px;
+  background: var(--vk-primary-soft); color: var(--vk-primary); font-weight: 600; font-size: 17px;
+}
+.vk-card-body { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.vk-card-name { font-weight: 500; color: var(--vk-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vk-card-meta { font-size: 12px; color: var(--vk-fg-muted); min-height: 1em; }
+.vk-card-actions {
+  position: absolute; top: 8px; right: 8px; display: none; gap: 4px;
+}
+.vk-card:hover .vk-card-actions, .vk-card:focus-within .vk-card-actions { display: flex; }
+.vk-card-actions a {
+  padding: 2px 8px; font-size: 12px; border-radius: var(--vk-radius-sm); background: var(--vk-muted);
+  color: var(--vk-fg-soft) !important; text-decoration: none !important;
+}
+.vk-card-actions a:hover { background: var(--vk-hover); color: var(--vk-fg) !important; }
+.vk-empty { grid-column: 1 / -1; color: var(--vk-fg-muted); padding: 24px 0; }
+
+/* While a project resolves to its board */
+.vk-opening body { cursor: progress; }
+.vk-opening #content { opacity: .45; transition: opacity .15s; pointer-events: none; }
+
+/* Sidebar: short list; "More" reveals the rest */
+html:not(.vk-menu-all) #main-menu .menu_root > li:is(
+  [data-name="overview"], [data-name="activity"], [data-name="roadmap"], [data-name="news"], [data-name="forums"],
+  [data-name="repository"], [data-name="gantt"], [data-name="backlogs"], [data-name="calendar_view"],
+  [data-name="team_planner_view"], [data-name="meetings"], [data-name="documents"], [data-name="resource_management"],
+  [data-name="costs"], [data-name="my_page"], [data-name="portfolios"]
+) { display: none; }
+#main-menu .vk-more { list-style: none; padding: 4px 8px; }
+#main-menu .vk-more button {
+  width: 100%; text-align: left; padding: 6px 10px; border: 0; border-radius: var(--vk-radius);
+  background: transparent; color: var(--vk-fg-muted); font: inherit; font-size: 13px; cursor: pointer;
+}
+#main-menu .vk-more button:hover { background: var(--vk-hover); color: var(--vk-fg); }
+.vk-sb-collapsed #main-menu .vk-more { display: none; }

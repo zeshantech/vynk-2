@@ -180,3 +180,219 @@ function vkDisableDarkModeChoice() {
 }
 ["DOMContentLoaded", "turbo:load", "turbo:render"].forEach((e) => document.addEventListener(e, vkDisableDarkModeChoice));
 vkDisableDarkModeChoice();
+
+// =====================================================================
+// Simple mode: projects on Home, a project opens on its Kanban board,
+// and the sidebar only shows what is used all day.
+// =====================================================================
+const VK_EVENTS = ["DOMContentLoaded", "turbo:load", "turbo:render"];
+const vkOnPage = (fn) => {
+  VK_EVENTS.forEach((e) => document.addEventListener(e, fn));
+  new MutationObserver(fn).observe(document.documentElement, { childList: true, subtree: true });
+  fn();
+};
+const vkStore = {
+  get(key, fallback) {
+    try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch (e) { return fallback; }
+  },
+  set(key, value) {
+    try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) {}
+  },
+};
+const vkEsc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const vkApi = (path) =>
+  fetch(`/api/v3${path}`, { credentials: "same-origin", headers: { Accept: "application/hal+json", "X-Requested-With": "XMLHttpRequest" } })
+    .then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); });
+
+// ---- Project -> Kanban board: open the first board, creating a status board if there is none ----
+const VK_OVERVIEW = /^\/projects\/([^/]+)\/?$/;
+const VK_RESERVED = new Set(["new", "queries", "menu"]);
+const vkProjectOf = (path) => {
+  const m = VK_OVERVIEW.exec(path);
+  return m && !VK_RESERVED.has(m[1]) ? decodeURIComponent(m[1]) : null;
+};
+
+async function vkResolveBoard(project) {
+  const base = `/projects/${encodeURIComponent(project)}`;
+  const boards = await fetch(`${base}/boards`, { credentials: "same-origin" });
+  if (!boards.ok) throw new Error("no boards");
+  const doc = new DOMParser().parseFromString(await boards.text(), "text/html");
+  const link = [...doc.querySelectorAll("a[href]")].map((a) => a.getAttribute("href")).find((h) => /\/boards\/\d+$/.test(h));
+  if (link) return link;
+
+  const token = document.querySelector('meta[name="csrf-token"]')?.content;
+  const created = await fetch(`${base}/boards`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "X-CSRF-Token": token || "", "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ "boards_grid[name]": "Kanban", "boards_grid[attribute]": "status" }),
+  });
+  if (!created.ok || !/\/boards\/\d+$/.test(new URL(created.url).pathname)) throw new Error("create failed");
+  return new URL(created.url).pathname;
+}
+
+let vkOpening = null;
+function vkOpenProject(project) {
+  if (vkOpening === project) return;
+  vkOpening = project;
+  document.documentElement.classList.add("vk-opening");
+  vkResolveBoard(project)
+    .catch(() => `/projects/${encodeURIComponent(project)}/work_packages`)
+    .then((url) => { location.assign(url); });
+}
+
+// Any link to a project's overview (or to its Boards list from the sidebar) opens the board instead.
+// ?overview=1 keeps the real overview reachable.
+document.addEventListener(
+  "click",
+  (event) => {
+    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    const a = event.target.closest("a[href]");
+    if (!a || a.target === "_blank") return;
+    const url = new URL(a.href, location.href);
+    if (url.origin !== location.origin || url.search) return;
+    const project = vkProjectOf(url.pathname) ||
+      (a.closest('#main-menu li[data-name="boards"]') && /^\/projects\/([^/]+)\/boards\/?$/.exec(url.pathname)?.[1]);
+    if (!project) return;
+    event.preventDefault();
+    event.stopPropagation();
+    vkOpenProject(decodeURIComponent(project));
+  },
+  true
+);
+
+function vkLanding() {
+  const project = vkProjectOf(location.pathname);
+  if (project && !location.search.includes("overview")) vkOpenProject(project);
+  const current = /^\/projects\/([^/]+)/.exec(location.pathname)?.[1];
+  if (current && !VK_RESERVED.has(current)) vkRemember(decodeURIComponent(current));
+}
+VK_EVENTS.forEach((e) => document.addEventListener(e, vkLanding));
+vkLanding();
+
+// Recently opened projects float to the top of Home.
+function vkRemember(identifier) {
+  const recent = vkStore.get("vk-recent", []).filter((p) => p !== identifier);
+  recent.unshift(identifier);
+  vkStore.set("vk-recent", recent.slice(0, 50));
+}
+
+// ---- Home: every project one click away ----
+async function vkLoadProjects() {
+  const filters = encodeURIComponent(JSON.stringify([{ active: { operator: "=", values: ["t"] } }]));
+  const sort = encodeURIComponent(JSON.stringify([["name", "asc"]]));
+  const projects = await vkApi(`/projects?pageSize=500&filters=${filters}&sortBy=${sort}`);
+  return projects._embedded.elements;
+}
+
+async function vkOpenTaskCounts() {
+  const filters = encodeURIComponent(JSON.stringify([{ status: { operator: "o", values: null } }]));
+  const wps = await vkApi(`/work_packages?pageSize=1&groupBy=project&filters=${filters}`);
+  const counts = {};
+  (wps.groups || []).forEach((g) => {
+    const href = g._links?.valueLink?.[0]?.href;
+    if (href) counts[href.split("/").pop()] = g.count;
+  });
+  return counts;
+}
+
+function vkRenderCards(grid, projects, counts, query) {
+  const recent = vkStore.get("vk-recent", []);
+  const rank = (p) => { const i = recent.indexOf(p.identifier); return i < 0 ? recent.length : i; };
+  const q = query.trim().toLowerCase();
+  const shown = projects
+    .filter((p) => !q || p.name.toLowerCase().includes(q))
+    .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+
+  grid.innerHTML = shown.length
+    ? shown.map((p) => {
+        const id = encodeURIComponent(p.identifier);
+        const open = counts[p.id];
+        return `<div class="vk-card" data-project="${vkEsc(p.identifier)}" tabindex="0" role="link">
+          <span class="vk-card-mark">${vkEsc(p.name.trim().charAt(0).toUpperCase() || "?")}</span>
+          <span class="vk-card-body">
+            <span class="vk-card-name">${vkEsc(p.name)}</span>
+            <span class="vk-card-meta">${open === undefined ? "" : `${open} open task${open === 1 ? "" : "s"}`}</span>
+          </span>
+          <span class="vk-card-actions">
+            <a href="/projects/${id}/work_packages">Tasks</a>
+            <a href="/projects/${id}/settings/general">Settings</a>
+          </span>
+        </div>`;
+      }).join("")
+    : `<p class="vk-empty">No projects${q ? " match your search" : " yet"}.</p>`;
+}
+
+async function vkHome() {
+  if (!document.body.classList.contains("controller-homescreen")) return;
+  const body = document.querySelector("#content-body");
+  if (!body || body.querySelector("#vk-home")) return;
+
+  const root = document.createElement("section");
+  root.id = "vk-home";
+  root.innerHTML = `
+    <div class="vk-home-bar">
+      <h1>Projects</h1>
+      <input type="search" class="vk-home-search" placeholder="Search projects  ( / )" aria-label="Search projects" autocomplete="off">
+      <a class="vk-home-new" href="/projects/new">+ New client</a>
+    </div>
+    <div class="vk-cards" aria-live="polite"></div>`;
+  body.prepend(root);
+
+  const grid = root.querySelector(".vk-cards");
+  const search = root.querySelector(".vk-home-search");
+  let projects = [];
+  let counts = {};
+  const render = () => vkRenderCards(grid, projects, counts, search.value);
+
+  search.addEventListener("input", render);
+  search.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") grid.querySelector(".vk-card")?.click();
+  });
+  const open = (card) => card && vkOpenProject(card.dataset.project);
+  grid.addEventListener("click", (e) => { if (!e.target.closest(".vk-card-actions")) open(e.target.closest(".vk-card")); });
+  grid.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.classList.contains("vk-card")) open(e.target); });
+
+  try { projects = await vkLoadProjects(); } catch (e) { grid.innerHTML = '<p class="vk-empty">Could not load projects. Reload to retry.</p>'; return; }
+  render();
+  search.focus();
+  vkOpenTaskCounts().then((c) => { counts = c; render(); }).catch(() => {});
+}
+vkOnPage(vkHome);
+
+// "/" focuses the project search on Home.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "/" || e.target.closest("input, textarea, select, [contenteditable='true']")) return;
+  const search = document.querySelector(".vk-home-search");
+  if (search) { e.preventDefault(); search.focus(); }
+});
+
+// ---- Sidebar: a short list, with "More" for everything else ----
+function vkMoreToggle() {
+  const menu = document.querySelector("#main-menu #menu-sidebar .menu_root, #main-menu #menu-sidebar > ul, #main-menu .menu_root");
+  if (!menu || menu.querySelector(".vk-more")) return;
+  const li = document.createElement("li");
+  li.className = "vk-more";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  const sync = () => { btn.textContent = document.documentElement.classList.contains("vk-menu-all") ? "Less" : "More"; };
+  btn.addEventListener("click", () => {
+    const all = document.documentElement.classList.toggle("vk-menu-all");
+    vkStore.set("vk-menu-all", all);
+    sync();
+  });
+  li.appendChild(btn);
+  menu.appendChild(li);
+  sync();
+}
+if (vkStore.get("vk-menu-all", false)) document.documentElement.classList.add("vk-menu-all");
+vkOnPage(vkMoreToggle);
+
+// Overview stays reachable (under "More") without being bounced to the board.
+function vkOverviewLink() {
+  document.querySelectorAll('#main-menu li[data-name="overview"] a[href]').forEach((a) => {
+    const url = new URL(a.href, location.href);
+    if (!url.search && vkProjectOf(url.pathname)) { url.searchParams.set("overview", "1"); a.href = url.pathname + url.search; }
+  });
+}
+vkOnPage(vkOverviewLink);
