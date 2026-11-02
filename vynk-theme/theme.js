@@ -1,3 +1,15 @@
+// MutationObserver that runs at most once per frame (the page mutates constantly while Angular renders).
+class vkBatchedObserver extends MutationObserver {
+  constructor(cb) {
+    let queued = false;
+    super((records, observer) => {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(() => { queued = false; cb(records, observer); });
+    });
+  }
+}
+
 // Vynk UI behaviour tweaks for OpenProject (UI only, no core changes).
 
 // Click a work package row -> open the details side panel (like Linear/Jira).
@@ -46,7 +58,7 @@ function vkMoveProjectSwitcher() {
 }
 
 ["DOMContentLoaded", "turbo:load", "turbo:render"].forEach((evt) => document.addEventListener(evt, vkMoveProjectSwitcher));
-new MutationObserver(vkMoveProjectSwitcher).observe(document.documentElement, { childList: true, subtree: true });
+new vkBatchedObserver(vkMoveProjectSwitcher).observe(document.documentElement, { childList: true, subtree: true });
 vkMoveProjectSwitcher();
 
 // ---- Sidebar: expanded / collapsed (icon rail) toggle, remembered across pages ----
@@ -89,7 +101,7 @@ vkMoveProjectSwitcher();
 
   function tick() { ensureToggle(); labelItems(); }
   ["DOMContentLoaded", "turbo:load", "turbo:render"].forEach((e) => document.addEventListener(e, tick));
-  new MutationObserver(tick).observe(document.documentElement, { childList: true, subtree: true });
+  new vkBatchedObserver(tick).observe(document.documentElement, { childList: true, subtree: true });
   tick();
 })();
 
@@ -105,7 +117,7 @@ function vkSidebarBrand() {
   sidebar.prepend(brand);
 }
 ["DOMContentLoaded", "turbo:load", "turbo:render"].forEach((e) => document.addEventListener(e, vkSidebarBrand));
-new MutationObserver(vkSidebarBrand).observe(document.documentElement, { childList: true, subtree: true });
+new vkBatchedObserver(vkSidebarBrand).observe(document.documentElement, { childList: true, subtree: true });
 vkSidebarBrand();
 
 // ---- Inline submenus: clicking the chevron of an open item collapses it again ----
@@ -132,7 +144,7 @@ function vkLoadOpenSubmenus() {
   });
 }
 ["DOMContentLoaded", "turbo:load", "turbo:render"].forEach((e) => document.addEventListener(e, vkLoadOpenSubmenus));
-new MutationObserver(vkLoadOpenSubmenus).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });
+new vkBatchedObserver(vkLoadOpenSubmenus).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });
 vkLoadOpenSubmenus();
 
 // Brand text on signed-out account pages: "OpenProject" -> "Vynk" in the page heading
@@ -158,7 +170,7 @@ function vkSimpleLoginError() {
   }
 }
 ["DOMContentLoaded", "turbo:load", "turbo:render"].forEach((e) => document.addEventListener(e, vkSimpleLoginError));
-new MutationObserver(vkSimpleLoginError).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+new vkBatchedObserver(vkSimpleLoginError).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
 vkSimpleLoginError();
 
 // Dark mode is disabled for now (the proxy serves every page in light mode). Keep the options in
@@ -187,10 +199,18 @@ vkDisableDarkModeChoice();
 // =====================================================================
 const VK_EVENTS = ["DOMContentLoaded", "turbo:load", "turbo:render"];
 const vkOnPage = (fn) => {
-  VK_EVENTS.forEach((e) => document.addEventListener(e, fn));
-  new MutationObserver(fn).observe(document.documentElement, { childList: true, subtree: true });
+  let queued = false;
+  const schedule = () => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => { queued = false; fn(); });
+  };
+  VK_EVENTS.forEach((e) => document.addEventListener(e, schedule));
+  new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
   fn();
 };
+// Stable colour per name, shared by cards, sidebar dots and the project header.
+const vkTone = (name) => { let h = 0; for (const c of name) h = (h * 31 + c.charCodeAt(0)) % 5; return `vk-t${h}`; };
 const vkStore = {
   get(key, fallback) {
     try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch (e) { return fallback; }
@@ -236,7 +256,8 @@ function vkOpenProject(project) {
   if (vkOpening === project) return;
   vkOpening = project;
   document.documentElement.classList.add("vk-opening");
-  vkResolveBoard(project)
+  const known = vkStore.get("vk-board", {})[project];
+  (known ? Promise.resolve(known) : vkResolveBoard(project))
     .catch(() => `/projects/${encodeURIComponent(project)}/work_packages`)
     .then((url) => { location.assign(url); });
 }
@@ -261,7 +282,26 @@ document.addEventListener(
   true
 );
 
+// Learn each project's board from where you land; a removed board (404) is forgotten and looked up again.
+function vkLearnBoard() {
+  const m = /^\/projects\/([^/]+)\/boards\/\d+\/?$/.exec(location.pathname);
+  if (!m) return;
+  const project = decodeURIComponent(m[1]);
+  const nav = performance.getEntriesByType("navigation")[0];
+  const fresh = nav && new URL(nav.name).pathname === location.pathname;
+  const boards = vkStore.get("vk-board", {});
+  if (fresh && nav.responseStatus === 404) {
+    delete boards[project];
+    vkStore.set("vk-board", boards);
+    vkOpening = null;
+    vkOpenProject(project);
+    return;
+  }
+  if (boards[project] !== location.pathname) { boards[project] = location.pathname; vkStore.set("vk-board", boards); }
+}
+
 function vkLanding() {
+  vkLearnBoard();
   const project = vkProjectOf(location.pathname);
   if (project && !location.search.includes("overview")) vkOpenProject(project);
   const current = /^\/projects\/([^/]+)/.exec(location.pathname)?.[1];
@@ -282,7 +322,9 @@ async function vkLoadProjects() {
   const filters = encodeURIComponent(JSON.stringify([{ active: { operator: "=", values: ["t"] } }]));
   const sort = encodeURIComponent(JSON.stringify([["name", "asc"]]));
   const projects = await vkApi(`/projects?pageSize=500&filters=${filters}&sortBy=${sort}`);
-  return projects._embedded.elements;
+  const list = projects._embedded.elements.map((p) => ({ id: p.id, identifier: p.identifier, name: p.name }));
+  vkStore.set("vk-projects", list);
+  return list;
 }
 
 async function vkOpenTaskCounts() {
@@ -293,6 +335,7 @@ async function vkOpenTaskCounts() {
     const href = g._links?.valueLink?.[0]?.href;
     if (href) counts[href.split("/").pop()] = g.count;
   });
+  vkStore.set("vk-counts", counts);
   return counts;
 }
 
@@ -309,7 +352,7 @@ function vkRenderCards(grid, projects, counts, query) {
         const id = encodeURIComponent(p.identifier);
         const open = counts[p.id];
         return `<div class="vk-card" data-project="${vkEsc(p.identifier)}" tabindex="0" role="link">
-          <span class="vk-card-mark">${vkEsc(p.name.trim().charAt(0).toUpperCase() || "?")}</span>
+          <span class="vk-card-mark ${vkTone(p.name)}">${vkEsc(p.name.trim().charAt(0).toUpperCase() || "?")}</span>
           <span class="vk-card-body">
             <span class="vk-card-name">${vkEsc(p.name)}</span>
             <span class="vk-card-meta">${open === undefined ? "" : `${open} open task${open === 1 ? "" : "s"}`}</span>
@@ -341,8 +384,8 @@ async function vkHome() {
 
   const grid = root.querySelector(".vk-cards");
   const search = root.querySelector(".vk-home-search");
-  let projects = [];
-  let counts = {};
+  let projects = vkStore.get("vk-projects", []);
+  let counts = vkStore.get("vk-counts", {});
   const render = () => vkRenderCards(grid, projects, counts, search.value);
 
   search.addEventListener("input", render);
@@ -353,9 +396,10 @@ async function vkHome() {
   grid.addEventListener("click", (e) => { if (!e.target.closest(".vk-card-actions")) open(e.target.closest(".vk-card")); });
   grid.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.classList.contains("vk-card")) open(e.target); });
 
-  try { projects = await vkLoadProjects(); } catch (e) { grid.innerHTML = '<p class="vk-empty">Could not load projects. Reload to retry.</p>'; return; }
   render();
   search.focus();
+  try { projects = await vkLoadProjects(); } catch (e) { if (!projects.length) grid.innerHTML = '<p class="vk-empty">Could not load projects. Reload to retry.</p>'; return; }
+  render();
   vkOpenTaskCounts().then((c) => { counts = c; render(); }).catch(() => {});
 }
 vkOnPage(vkHome);
@@ -376,8 +420,9 @@ const VK_NAV_ICONS = {
   help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1 1-1 1.7M12 17h.01"/>',
 };
 const vkIcon = (name) => `<svg viewBox="0 0 24 24" aria-hidden="true">${VK_NAV_ICONS[name]}</svg>`;
-let vkProjectList = null;
+let vkProjectList = vkStore.get("vk-projects", null);
 
+let vkNavLoaded = false;
 function vkNavItem(href, label, icon, active) {
   return `<a class="vk-nav-item${active ? " is-active" : ""}" href="${href}" title="${vkEsc(label)}">${icon}<span>${vkEsc(label)}</span></a>`;
 }
@@ -395,7 +440,7 @@ function vkRenderNav(nav) {
     ${vkNavItem("/notifications", "Inbox", vkIcon("inbox"), path.startsWith("/notifications"))}
     ${vkNavItem("/my/work?date=today", "My work", vkIcon("work"), path.startsWith("/my/work"))}
     <div class="vk-nav-label">Projects <a class="vk-nav-add" href="/projects/new" title="New client">+</a></div>
-    <div class="vk-nav-projects">${projects.map((p) => `<a class="vk-nav-item vk-nav-project${decodeURIComponent(current || "") === p.identifier ? " is-active" : ""}" data-project="${vkEsc(p.identifier)}" href="/projects/${encodeURIComponent(p.identifier)}" title="${vkEsc(p.name)}"><span class="vk-dot">${vkEsc(p.name.trim().charAt(0).toUpperCase())}</span><span>${vkEsc(p.name)}</span></a>`).join("")}</div>
+    <div class="vk-nav-projects">${projects.map((p) => `<a class="vk-nav-item vk-nav-project${decodeURIComponent(current || "") === p.identifier ? " is-active" : ""}" data-project="${vkEsc(p.identifier)}" href="/projects/${encodeURIComponent(p.identifier)}" title="${vkEsc(p.name)}"><span class="vk-dot ${vkTone(p.name)}">${vkEsc(p.name.trim().charAt(0).toUpperCase())}</span><span>${vkEsc(p.name)}</span></a>`).join("")}</div>
     <div class="vk-nav-spacer"></div>
     <div class="vk-nav-label">System</div>
     ${vkNavItem("/my/account", "Settings", vkIcon("gear"), path.startsWith("/my/account"))}
@@ -416,9 +461,9 @@ function vkNav() {
   }
   nav.dataset.path = key;
   vkRenderNav(nav);
-  if (!vkProjectList) {
-    vkProjectList = [];
-    vkLoadProjects().then((list) => { vkProjectList = list; nav.dataset.path = ""; vkNav(); }).catch(() => { vkProjectList = null; });
+  if (!vkNavLoaded) {
+    vkNavLoaded = true;
+    vkLoadProjects().then((list) => { vkProjectList = list; nav.dataset.path = ""; vkNav(); }).catch(() => {});
   }
 }
 vkOnPage(vkNav);
@@ -436,7 +481,9 @@ function vkProjectBar() {
   const m = /^\/projects\/([^/]+)(\/.*)?$/.exec(location.pathname);
   const content = document.querySelector("#content");
   const existing = document.querySelector("#vk-pbar");
-  if (!m || VK_RESERVED.has(m[1]) || !m[2] || m[2] === "/" || !content) { existing?.remove(); return; }
+  const show = m && !VK_RESERVED.has(m[1]) && m[2] && m[2] !== "/" && content;
+  document.documentElement.classList.toggle("vk-has-pbar", !!show);
+  if (!show) { existing?.remove(); return; }
   const project = decodeURIComponent(m[1]);
   if (existing && existing.dataset.project === project) {
     existing.querySelectorAll(".vk-tab").forEach((t) => t.classList.toggle("is-active", VK_TABS.find((x) => x.key === t.dataset.tab).test.test(location.pathname)));
@@ -449,7 +496,7 @@ function vkProjectBar() {
   bar.dataset.project = project;
   bar.innerHTML = `
     <div class="vk-pbar-top">
-      <span class="vk-pbar-mark">${vkEsc(project.charAt(0).toUpperCase())}</span>
+      <span class="vk-pbar-mark ${vkTone(project)}">${vkEsc(project.charAt(0).toUpperCase())}</span>
       <div class="vk-pbar-title"><h2>${vkEsc(project)}</h2><p></p></div>
       <div class="vk-people"></div>
       <a class="vk-btn" href="${base}/members">Invite</a>
@@ -461,7 +508,9 @@ function vkProjectBar() {
   vkApi(`/projects/${encodeURIComponent(project)}`).then((p) => {
     if (bar.dataset.project !== project) return;
     bar.querySelector("h2").textContent = p.name;
-    bar.querySelector(".vk-pbar-mark").textContent = p.name.trim().charAt(0).toUpperCase();
+    const mark = bar.querySelector(".vk-pbar-mark");
+    mark.textContent = p.name.trim().charAt(0).toUpperCase();
+    mark.className = `vk-pbar-mark ${vkTone(p.name)}`;
     bar.querySelector("p").textContent = (p.description?.raw || "").split("\n")[0].slice(0, 140);
     const filters = encodeURIComponent(JSON.stringify([{ project: { operator: "=", values: [String(p.id)] } }]));
     return vkApi(`/memberships?pageSize=50&filters=${filters}`).then((ms) => {
@@ -473,3 +522,31 @@ function vkProjectBar() {
   }).catch(() => {});
 }
 vkOnPage(vkProjectBar);
+
+// ---- Sign-in: eye button to show / hide the password ----
+function vkPasswordEye() {
+  if (!document.body.classList.contains("controller-account")) return;
+  document.querySelectorAll('input[type="password"]:not([data-vk-eye])').forEach((input) => {
+    input.dataset.vkEye = "1";
+    const wrap = document.createElement("span");
+    wrap.className = "vk-pw";
+    input.before(wrap);
+    wrap.append(input);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "vk-pw-eye";
+    btn.setAttribute("aria-label", "Show password");
+    const OPEN = '<svg viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+    const SHUT = '<svg viewBox="0 0 24 24"><path d="M3 3l18 18M10.6 6.1A9.8 9.8 0 0 1 12 6c6.4 0 10 6 10 6a17 17 0 0 1-3.2 3.9M6.5 7.6A17 17 0 0 0 2 12s3.6 6 10 6a9.7 9.7 0 0 0 4-.9M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>';
+    btn.innerHTML = OPEN;
+    btn.addEventListener("click", () => {
+      const show = input.type === "password";
+      input.type = show ? "text" : "password";
+      btn.innerHTML = show ? SHUT : OPEN;
+      btn.setAttribute("aria-label", show ? "Hide password" : "Show password");
+      input.focus();
+    });
+    wrap.append(btn);
+  });
+}
+vkOnPage(vkPasswordEye);
